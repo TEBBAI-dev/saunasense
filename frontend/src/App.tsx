@@ -1,104 +1,25 @@
-import { useState, useRef, useEffect } from 'react';
-import { API_CONFIG } from './config';
+import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
+import { initializeApp, getApps } from 'firebase/app';
+import type { FirebaseApp } from 'firebase/app';
 
-// Speech Recognition types
-interface SpeechRecognition extends EventTarget {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  start(): void;
-  stop(): void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-}
+// FIX: Separated value and type imports for firebase/auth
+import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import type { Auth } from 'firebase/auth';
 
-interface SpeechRecognitionEvent {
-  results: SpeechRecognitionResultList;
-}
+// FIX: Separated value and type imports for firebase/firestore
+import { 
+  getFirestore, doc, onSnapshot, setDoc, getDoc, updateDoc, 
+  arrayUnion, setLogLevel
+} from 'firebase/firestore';
+import type { Firestore, DocumentReference, DocumentData } from 'firebase/firestore';
 
-interface SpeechRecognitionResultList {
-  [index: number]: SpeechRecognitionResult;
-  length: number;
-}
+import { LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, ResponsiveContainer } from 'recharts';
+import { 
+  Loader, Volume2, VolumeX, Star, Thermometer, Wind, BookOpen, 
+  Droplet, Wand2, Power, ChevronsRight, ArrowLeft 
+} from 'lucide-react';
 
-interface SpeechRecognitionResult {
-  [index: number]: SpeechRecognitionAlternative;
-  length: number;
-  isFinal: boolean;
-}
-
-interface SpeechRecognitionAlternative {
-  transcript: string;
-  confidence: number;
-}
-
-interface SpeechRecognitionErrorEvent {
-  error: string;
-}
-
-declare var SpeechRecognition: {
-  new (): SpeechRecognition;
-};
-
-declare var webkitSpeechRecognition: {
-  new (): SpeechRecognition;
-};
-
-// Extend Window interface for Speech Recognition
-declare global {
-  interface Window {
-    SpeechRecognition: typeof SpeechRecognition;
-    webkitSpeechRecognition: typeof webkitSpeechRecognition;
-  }
-}
-
-// --- ICONS (Inlined SVGs for a single-file build) ---
-
-const SunIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-6.364-.386l1.591-1.591M3 12H.75m.386-6.364l1.591 1.591" />
-  </svg>
-);
-
-const MoonIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21c1.93 0 3.73-.524 5.287-1.447z" />
-  </svg>
-);
-
-const StopIcon = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8">
-    <path fillRule="evenodd" d="M4.5 7.5a3 3 0 013-3h9a3 3 0 013 3v9a3 3 0 01-3 3h-9a3 3 0 01-3-3v-9z" clipRule="evenodd" />
-  </svg>
-);
-
-// --- Data Types (Shared with Backend) ---
-
-type SaunaPhase = {
-  type: 'heat' | 'cooldown' | 'rest';
-  durationMinutes: number;
-  targetTemp: number;
-  coachScript: string;
-};
-
-type SessionProfile = {
-  title: string;
-  totalDurationMinutes: number;
-  phases: SaunaPhase[];
-};
-
-type SensorData = {
-  temperature: number;
-  humidity: number;
-  presence: boolean;
-  timestamp: number;
-};
-
-// --- Updated AppState ---
-type AppState = 'startPoint' | 'welcome' | 'steamTransition' | 'followUpQuestion' | 'onboarding' | 'newbieRecommendations' | 'experiencedFollowUp' | 'experiencedSettings' | 'saunaReady' | 'generating' | 'session' | 'postSaunaFeedback' | 'feedbackQuestions' | 'askStatistics' | 'showStatistics' | 'askRecommendations' | 'recommendations' | 'summary';
-
-// --- Brand Colors ---
+// --- Brand Colors (From Original App.tsx) ---
 const colors = {
   bg: 'bg-black',
   text: 'text-gray-100',
@@ -107,1539 +28,1370 @@ const colors = {
   primaryBg: 'bg-[#eb0f35]',
   card: 'bg-zinc-900',
   border: 'border-zinc-800',
-  accentGold: '#eb0f35',
+  accentGold: '#eb0f35', // The red color from your original file
 };
 
-// --- Animated Text Component ---
-const AnimatedWelcomeText = ({ onAnimationComplete, playVoice }: { onAnimationComplete: () => void; playVoice: (text: string) => void }) => {
-  const [displayText, setDisplayText] = useState('');
-  const fullText = "Hello, I am your SensAI assistant. Welcome to the session. What kind of assistance would you like today?";
-  const animationIntervalRef = useRef<number | null>(null);
-  const voicePlayedRef = useRef(false);
+// --- Firebase (Simulated Config) ---
+// In a real build, this would be populated.
+const firebaseConfig = {
 
-  useEffect(() => {
-    let index = 0;
-    animationIntervalRef.current = window.setInterval(() => {
-      if (index < fullText.length) {
-        setDisplayText(prev => prev + fullText.charAt(index));
-        index++;
-        // Play voice when we're about 20% through the text
-        if (index === Math.floor(fullText.length * 0.2) && !voicePlayedRef.current) {
-          voicePlayedRef.current = true;
-          playVoice(fullText);
-        }
-      } else {
-        clearInterval(animationIntervalRef.current!);
-        // Wait a bit after animation finishes before transitioning
-        setTimeout(onAnimationComplete, 1500); 
-      }
-    }, 50); // Speed of typing
+  apiKey: "AIzaSyB4XguaZxBNj3ilPbXl0-JHnN7RHORuKLE",
 
-    return () => {
-      if (animationIntervalRef.current) {
-        clearInterval(animationIntervalRef.current);
-      }
-    };
-  }, [onAnimationComplete, fullText, playVoice]);
+  authDomain: "sauna-senseai.firebaseapp.com",
 
-  return (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`text-2xl ${colors.text} min-h-[10rem]`}>
-        {displayText}
-        <span className="inline-block w-1 h-6 bg-gray-100 ml-1 animate-pulse"></span>
-      </p>
-    </div>
-  );
+  projectId: "sauna-senseai",
+
+  storageBucket: "sauna-senseai.firebasestorage.app",
+
+  messagingSenderId: "579820513574",
+
+  appId: "1:579820513574:web:65c40899958afc80c5b9e7",
+
+  measurementId: "G-Q072S7BR3S"
+
 };
 
-// --- Steam Transition Component ---
-const SteamTransition = ({ onComplete }: { onComplete: () => void }) => {
-  const [isVisible, setIsVisible] = useState(true);
-  const [particles] = useState(() => 
-    Array.from({ length: 40 }).map(() => ({
-      left: Math.random() * 100,
-      width: 30 + Math.random() * 80,
-      height: 40 + Math.random() * 100,
-      duration: 4 + Math.random() * 3,
-      delay: Math.random() * 2,
-      drift: (Math.random() - 0.5) * 40,
-      blur: 8 + Math.random() * 12,
-      opacity: 0.15 + Math.random() * 0.25,
-    }))
-  );
 
-  useEffect(() => {
-    // Show steam for 3 seconds, then fade out
-    const timer = setTimeout(() => {
-      setIsVisible(false);
-      setTimeout(onComplete, 800); // Wait for fade out animation
-    }, 3000);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-sens-ai-app';
 
-    return () => clearTimeout(timer);
-  }, [onComplete]);
+// Initialize Firebase
+const app: FirebaseApp = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
+const db: Firestore = getFirestore(app);
+const auth: Auth = getAuth(app);
+setLogLevel('debug');
+// --- End of Firebase Config ---
 
-  return (
-    <div className={`absolute inset-0 z-50 transition-opacity duration-800 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
-      <div className="relative w-full h-full bg-black overflow-hidden">
-        {/* Ambient glow layer */}
-        <div 
-          className="absolute inset-0 opacity-30"
-          style={{
-            background: 'radial-gradient(ellipse at center bottom, rgba(255,255,255,0.1) 0%, transparent 70%)',
-            animation: 'pulse-glow 3s ease-in-out infinite',
-          }}
-        />
-        
-        {/* Steam particles */}
-        {particles.map((particle, i) => (
-          <div
-            key={i}
-            className="absolute rounded-full"
-            style={{
-              left: `${particle.left}%`,
-              bottom: '-5%',
-              width: `${particle.width}px`,
-              height: `${particle.height}px`,
-              background: `radial-gradient(ellipse at center, 
-                rgba(255,255,255,${particle.opacity * 1.2}) 0%, 
-                rgba(255,255,255,${particle.opacity * 0.8}) 20%,
-                rgba(240,240,250,${particle.opacity * 0.5}) 40%, 
-                rgba(220,220,240,${particle.opacity * 0.3}) 60%,
-                rgba(200,200,230,${particle.opacity * 0.15}) 80%,
-                transparent 100%)`,
-              filter: `blur(${particle.blur}px)`,
-              boxShadow: `0 0 ${particle.blur * 2}px rgba(255,255,255,${particle.opacity * 0.5})`,
-              animation: `steam-rise-${i} ${particle.duration}s cubic-bezier(0.4, 0, 0.2, 1) forwards`,
-              animationDelay: `${particle.delay}s`,
-            }}
-          />
-        ))}
-        
-        {/* Additional wispy layers for depth */}
-        {Array.from({ length: 15 }).map((_, i) => {
-          const wisp = {
-            left: Math.random() * 100,
-            width: 60 + Math.random() * 120,
-            height: 80 + Math.random() * 150,
-            duration: 5 + Math.random() * 4,
-            delay: Math.random() * 2.5,
-            drift: (Math.random() - 0.5) * 50,
-            blur: 15 + Math.random() * 20,
-            opacity: 0.08 + Math.random() * 0.12,
-          };
-          return (
-            <div
-              key={`wisp-${i}`}
-              className="absolute rounded-full"
-              style={{
-                left: `${wisp.left}%`,
-                bottom: '-8%',
-                width: `${wisp.width}px`,
-                height: `${wisp.height}px`,
-                background: `radial-gradient(ellipse at center, 
-                  rgba(255,255,255,${wisp.opacity}) 0%, 
-                  rgba(250,250,255,${wisp.opacity * 0.6}) 30%,
-                  transparent 70%)`,
-                filter: `blur(${wisp.blur}px)`,
-                animation: `steam-rise-wisp-${i} ${wisp.duration}s cubic-bezier(0.3, 0, 0.1, 1) forwards`,
-                animationDelay: `${wisp.delay}s`,
-              }}
-            />
-          );
-        })}
-        
-        <style>{`
-          @keyframes pulse-glow {
-            0%, 100% {
-              opacity: 0.2;
-            }
-            50% {
-              opacity: 0.35;
-            }
-          }
-          
-          ${particles.map((particle, i) => `
-            @keyframes steam-rise-${i} {
-              0% {
-                transform: translateY(0) translateX(0) scale(0.8) rotate(0deg);
-                opacity: 0;
-              }
-              10% {
-                opacity: ${particle.opacity};
-              }
-              50% {
-                transform: translateY(-45vh) translateX(${particle.drift * 0.4}px) scale(1.3) rotate(${Math.random() * 10 - 5}deg);
-                opacity: ${particle.opacity * 0.8};
-              }
-              100% {
-                transform: translateY(-100vh) translateX(${particle.drift}px) scale(2.2) rotate(${Math.random() * 20 - 10}deg);
-                opacity: 0;
-              }
-            }
-          `).join('')}
-          
-          ${Array.from({ length: 15 }).map((_, i) => {
-            const wisp = {
-              drift: (Math.random() - 0.5) * 50,
-            };
-            return `
-              @keyframes steam-rise-wisp-${i} {
-                0% {
-                  transform: translateY(0) translateX(0) scale(0.6);
-                  opacity: 0;
-                }
-                15% {
-                  opacity: 0.1;
-                }
-                60% {
-                  transform: translateY(-50vh) translateX(${wisp.drift * 0.5}px) scale(1.4);
-                  opacity: 0.08;
-                }
-                100% {
-                  transform: translateY(-110vh) translateX(${wisp.drift}px) scale(2.8);
-                  opacity: 0;
-                }
-              }
-            `;
-          }).join('')}
-        `}</style>
-      </div>
-    </div>
-  );
+// --- Audio Context Management ---
+let audioContext: AudioContext | null = null;
+let audioSource: AudioBufferSourceNode | null = null;
+
+const getAudioContext = (): AudioContext => {
+  if (!audioContext) {
+    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+  }
+  return audioContext;
 };
 
-// --- Animated Follow-up Question Component ---
-const AnimatedFollowUpQuestion = ({ onAnimationComplete, playVoice }: { onAnimationComplete: () => void; playVoice: (text: string) => void }) => {
-  const [displayText, setDisplayText] = useState('');
-  const fullText = "Welcome. To perfectly tailor this session, are you new to the sauna, or a familiar guest?";
-  const animationIntervalRef = useRef<number | null>(null);
-  const voicePlayedRef = useRef(false);
+const playPcmData = (pcmData: Float32Array): Promise<void> => {
+  try {
+    const ctx = getAudioContext();
+    ctx.resume(); // Ensure context is active
+    
+    if (audioSource) {
+      audioSource.stop(); // Stop any currently playing audio
+    }
+    
+    const buffer = ctx.createBuffer(1, pcmData.length, 24000); // 24kHz sample rate
+    buffer.getChannelData(0).set(pcmData);
 
-  useEffect(() => {
-    let index = 0;
-    animationIntervalRef.current = window.setInterval(() => {
-      if (index < fullText.length) {
-        setDisplayText(prev => prev + fullText.charAt(index));
-        index++;
-        // Play voice when we're about 20% through the text
-        if (index === Math.floor(fullText.length * 0.2) && !voicePlayedRef.current) {
-          voicePlayedRef.current = true;
-          playVoice(fullText);
-        }
-      } else {
-        clearInterval(animationIntervalRef.current!);
-        // Wait a bit after animation finishes before showing options
-        setTimeout(onAnimationComplete, 1500); 
+    audioSource = ctx.createBufferSource();
+    audioSource.buffer = buffer;
+    audioSource.connect(ctx.destination);
+    audioSource.start(0);
+    
+    return new Promise((resolve) => {
+      if(audioSource) {
+        audioSource.onended = () => resolve();
       }
-    }, 50); // Speed of typing
-
-    return () => {
-      if (animationIntervalRef.current) {
-        clearInterval(animationIntervalRef.current);
-      }
-    };
-  }, [onAnimationComplete, fullText, playVoice]);
-
-  return (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`text-2xl ${colors.text} min-h-[10rem]`}>
-        {displayText}
-        <span className="inline-block w-1 h-6 bg-gray-100 ml-1 animate-pulse"></span>
-      </p>
-    </div>
-  );
+    });
+  } catch (error) {
+    console.error("Audio play failed:", error);
+    return Promise.reject(error);
+  }
 };
 
+// --- Base64 to PCM ---
+function base64ToArrayBuffer(base64: string): Float32Array {
+  const binaryString = window.atob(base64);
+  const len = binaryString.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binaryString.charCodeAt(i);
+  }
+  // The API returns signed 16-bit PCM. We need 32-bit float for Web Audio API.
+  const pcm16 = new Int16Array(bytes.buffer);
+  const pcm32 = new Float32Array(pcm16.length);
+  for (let i = 0; i < pcm16.length; i++) {
+    pcm32[i] = pcm16[i] / 32768.0; // Convert to [-1.0, 1.0] range
+  }
+  return pcm32;
+}
+
+// --- Types ---
+interface ViewState {
+  name: string;
+  payload?: any;
+}
+
+interface SaunaSettings {
+  timer: number;
+  temperature: number;
+  music: boolean;
+}
+
+interface SensorRecord {
+  time: string;
+  temp: number;
+  humidity: number;
+}
+
+interface SessionData {
+  rating: number;
+  heat: 'Too cold' | 'Just right' | 'Too hot';
+  oil: string;
+  thoughts: string;
+  recommendations: boolean;
+  showStats: boolean;
+  timer: number;
+  temperature: number;
+  music: boolean;
+  sensorHistory: SensorRecord[];
+  timestamp: number;
+}
+
+interface Stats {
+  totalSessions: number;
+  avgRating: number;
+  lastSession: SessionData | null;
+  lastRecommendation: string | null;
+}
+
+interface AppContextType {
+  speak: (text: string) => Promise<void>;
+  isSpeaking: boolean;
+  isNarrationEnabled: boolean;
+  setIsNarrationEnabled: React.Dispatch<React.SetStateAction<boolean>>;
+}
+
+// --- App Context ---
+const AppContext = createContext<AppContextType | undefined>(undefined);
 
 // --- Main App Component ---
-
-function App() {
-  // --- State ---
-  const [appState, setAppState] = useState<AppState>('startPoint'); // Default to startPoint
-  const [sessionProfile, setSessionProfile] = useState<SessionProfile | null>(null);
-  const [sensorData, setSensorData] = useState<SensorData | null>(null);
-  const [aiCoachMessage, setAiCoachMessage] = useState<string>(''); // Default to empty
-  const [sessionTime, setSessionTime] = useState(0);
-  const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
-  const [userInput, setUserInput] = useState('');
-  const [isListening, setIsListening] = useState(false);
-  const [userExperience, setUserExperience] = useState<'newbie' | 'experienced' | null>(null); // Used for future features
-  const [userGoal, setUserGoal] = useState<string>(''); // Used for session personalization
-  const [recommendations, setRecommendations] = useState<string>('');
-  const [harviaToken, setHarviaToken] = useState<string | null>(null);
-  const [selectedTemp, setSelectedTemp] = useState<number>(75);
-  const [selectedTimer, setSelectedTimer] = useState<number>(20);
-  const [musicEnabled, setMusicEnabled] = useState<boolean>(false);
-  const [saunaReadyTime, setSaunaReadyTime] = useState<number>(0);
-  const [feedback, setFeedback] = useState({
-    rating: 0,
-    heat: '',
-    musicEnjoyment: '',
-    thoughts: '',
+export default function App() {
+  const [view, setView] = useState<ViewState>({ name: 'welcome', payload: null });
+  const [animationStep, setAnimationStep] = useState(1);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isAuthReady, setIsAuthReady] = useState(false);
+  const [userId, setUserId] = useState<string | null>(null);
+  
+  const [saunaSettings, setSaunaSettings] = useState<SaunaSettings>({ timer: 15, temperature: 75, music: false });
+  const [sensorHistory, setSensorHistory] = useState<SensorRecord[]>([]);
+  const [stats, setStats] = useState<Stats>({
+    totalSessions: 0,
+    avgRating: 0,
+    lastSession: null,
+    lastRecommendation: null
   });
-  const [showStats, setShowStats] = useState(false);
-  const audioRef = useRef<HTMLAudioElement>(null);
-  const intervalRef = useRef<number | null>(null);
-  const recognitionRef = useRef<SpeechRecognition | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
 
-  const API_BASE_URL = 'https://new-gifts-tie.loca.lt';
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [isNarrationEnabled, setIsNarrationEnabled] = useState(true);
+  const [hasInteracted, setHasInteracted] = useState(false);
+  
+  const viewRef = useRef(view.name);
 
-  // Harvia API Functions
-  const authenticateHarvia = async () => {
-    try {
-      const response = await fetch(`${API_CONFIG.HARVIA_API_BASE}/auth/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          email: API_CONFIG.HARVIA_EMAIL,
-          password: API_CONFIG.HARVIA_PASSWORD,
-        }),
-      });
-      if (!response.ok) throw new Error('Harvia authentication failed');
-      const data = await response.json();
-      setHarviaToken(data.token);
-      return data.token;
-    } catch (error) {
-      console.error('Harvia auth error:', error);
-      return null;
+  // --- Animation and View Change ---
+  const changeView = useCallback((newView: string, payload: any = null) => {
+    if (audioSource) {
+      audioSource.stop(); // Stop any speech when view changes
     }
-  };
+    setAnimationStep(1); // Reset animation step
+    setView({ name: newView, payload }); // Store view name and payload
+    viewRef.current = newView;
 
-  const getHarviaSensorData = async () => {
-    try {
-      const token = harviaToken || await authenticateHarvia();
-      if (!token) throw new Error('No Harvia token');
-
-      const response = await fetch(`${API_CONFIG.HARVIA_API_BASE}/devices/sensors`, {
-        headers: { 'Authorization': `Bearer ${token}` },
-      });
-      if (!response.ok) throw new Error('Failed to fetch sensor data');
-      const data = await response.json();
-      
-      // Convert Harvia sensor data to our format
-      if (data.length > 0) {
-        const sensor = data[0];
-        return {
-          temperature: sensor.temperature || 0,
-          humidity: sensor.humidity || 0,
-          presence: sensor.presence || false,
-          timestamp: Date.now(),
-        } as SensorData;
+    setTimeout(() => {
+      if (viewRef.current === newView) { // Only animate if view hasn't changed again
+        setAnimationStep(2);
       }
-      return null;
-    } catch (error) {
-      console.error('Harvia sensor error:', error);
-      return null;
-    }
-  };
+    }, 50); // 50ms delay to ensure step 1 renders, then trigger animation
+  }, []); // Empty dependency array means this function reference is stable
 
-  // Control Harvia device - will be used when device IDs are available from API
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const controlHarviaDevice = async (deviceId: string, temperature?: number, humidity?: number) => {
-    try {
-      const token = harviaToken || await authenticateHarvia();
-      if (!token) throw new Error('No Harvia token');
-
-      const body: any = {};
-      if (temperature !== undefined) body.targetTemperature = temperature;
-      if (humidity !== undefined) body.targetHumidity = humidity;
-
-      const response = await fetch(`${API_CONFIG.HARVIA_API_BASE}/devices/${deviceId}/control`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(body),
-      });
-      return response.ok;
-    } catch (error) {
-      console.error('Harvia control error:', error);
-      return false;
-    }
-  };
-
-  // AI Recommendation Functions
-  const getNewbieRecommendations = async (sensorData: SensorData | null) => {
-    try {
-      const sensorInfo = sensorData 
-        ? `Current sauna conditions: Temperature ${sensorData.temperature}°C, Humidity ${sensorData.humidity}%. `
-        : '';
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_CONFIG.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are SaunaSensAI, a warm and encouraging sauna wellness coach. Provide beginner-friendly sauna advice with specific recommended settings (temperature, humidity, duration) and helpful tips for first-time sauna users. Keep it concise, warm, and practical.',
-            },
-            {
-              role: 'user',
-              content: `${sensorInfo}I'm new to sauna. Please recommend default settings and give me advice on sauna habits and best practices.`,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 300,
-        }),
-      });
-
-      if (!response.ok) throw new Error('AI recommendation failed');
-      const data = await response.json();
-      return data.choices[0].message.content;
-    } catch (error) {
-      console.error('AI recommendation error:', error);
-      return 'Welcome to sauna! I recommend starting with 60-70°C temperature and 10-20% humidity for 10-15 minutes. Remember to stay hydrated, listen to your body, and take breaks when needed.';
-    }
-  };
-
-  const getGoalFollowUp = async (sensorData: SensorData | null) => {
-    try {
-      const sensorInfo = sensorData 
-        ? `Current sauna conditions: Temperature ${sensorData.temperature}°C, Humidity ${sensorData.humidity}%. `
-        : '';
-
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_CONFIG.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are SaunaSensAI, a knowledgeable sauna wellness coach. Ask the user about their specific goals for this sauna session (e.g., relaxation, recovery, performance, stress relief). Be warm and conversational.',
-            },
-            {
-              role: 'user',
-              content: `${sensorInfo}I'm experienced with sauna. What would you like to know about my goals for this session?`,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 200,
-        }),
-      });
-
-      if (!response.ok) throw new Error('AI follow-up failed');
-      const data = await response.json();
-      return data.choices[0].message.content;
-    } catch (error) {
-      console.error('AI follow-up error:', error);
-      return 'What would you like to achieve with this sauna session? For example, relaxation, muscle recovery, stress relief, or performance enhancement?';
-    }
-  };
-
-  // Handle user response function (defined before useEffect)
-  const handleUserResponse = async (response: string) => {
-    if (!response.trim()) return;
-    
-    // Process the user's response to determine their experience level
-    const lowerResponse = response.toLowerCase();
-    
-    if (lowerResponse.includes('new') || lowerResponse.includes('first time') || lowerResponse.includes('never')) {
-      setUserExperience('newbie');
-      setAppState('newbieRecommendations');
-      
-      // Get sensor data and generate recommendations
-      const sensorData = await getHarviaSensorData();
-      const recommendations = await getNewbieRecommendations(sensorData);
-      setRecommendations(recommendations);
-      setSensorData(sensorData);
-      playVoice(recommendations);
-      
-    } else if (lowerResponse.includes('familiar') || lowerResponse.includes('experienced') || lowerResponse.includes('regular') || lowerResponse.includes('been here')) {
-      setUserExperience('experienced');
-      setAppState('experiencedFollowUp');
-      
-      // Get sensor data and ask follow-up question
-      const sensorData = await getHarviaSensorData();
-      setSensorData(sensorData);
-      const followUp = await getGoalFollowUp(sensorData);
-      setAiCoachMessage(followUp);
-      playVoice(followUp);
-      
-    } else {
-      // Default to experienced if unclear
-      setUserExperience('experienced');
-      setAppState('experiencedFollowUp');
-      
-      const sensorData = await getHarviaSensorData();
-      setSensorData(sensorData);
-      const followUp = await getGoalFollowUp(sensorData);
-      setAiCoachMessage(followUp);
-      playVoice(followUp);
-    }
-  };
-
-  const handleGoalResponse = async (goal: string) => {
-    if (!goal.trim()) return;
-    setUserGoal(goal);
-    // For experienced users, go to settings screen
-    setAppState('experiencedSettings');
-  };
-
-  const confirmExperiencedSettings = async () => {
-    // Calculate ready time based on current temp and target temp
-    const currentTemp = sensorData?.temperature || 20;
-    const tempDiff = Math.abs(selectedTemp - currentTemp);
-    const estimatedMinutes = Math.ceil(tempDiff / 5); // Rough estimate: 5°C per minute
-    setSaunaReadyTime(estimatedMinutes);
-    setAppState('saunaReady');
-    playVoice(`Your sauna will be ready in approximately ${estimatedMinutes} minutes. I've set the temperature to ${selectedTemp}°C and timer to ${selectedTimer} minutes.${musicEnabled ? ' Music is enabled.' : ''}`);
-  };
-
-  const startSaunaTime = async () => {
-    // Use selected settings for experienced users, or default for newbies
-    const goal = userExperience === 'experienced' 
-      ? `${userGoal || 'Custom Session'} - ${selectedTemp}°C, ${selectedTimer}min`
-      : userGoal || 'Beginner Session';
-    await startSession(goal);
-  };
-
-  // Initialize speech recognition
+  // --- Authentication ---
   useEffect(() => {
-    if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      const recognition = new SpeechRecognition();
-      recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        const transcript = event.results[0][0].transcript;
-        setUserInput(transcript);
-        if (appState === 'experiencedFollowUp') {
-          handleGoalResponse(transcript);
+    const initAuth = async () => {
+      try {
+        const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        if (token) {
+          await signInWithCustomToken(auth, token);
         } else {
-          handleUserResponse(transcript);
+          await signInAnonymously(auth);
         }
-      };
+      } catch (error) {
+        console.error("Auth Error: ", error);
+        if (auth.currentUser === null) {
+          await signInAnonymously(auth);
+        }
+      }
+    };
+    
+    initAuth();
 
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        console.error('Speech recognition error:', event.error);
-        setIsListening(false);
-      };
-
-      recognition.onend = () => {
-        setIsListening(false);
-      };
-
-      recognitionRef.current = recognition;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const unsub = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        setUserId(user.uid);
+        setIsAuthReady(true);
+      } else {
+        setUserId(null);
+        setIsAuthReady(false);
+        initAuth(); // Try to re-authenticate
+      }
+    });
+    return () => unsub();
   }, []);
 
-  // --- Core API Functions ---
+  // --- Data Loading ---
+  useEffect(() => {
+    if (!isAuthReady || !userId || !db) {
+      if (isAuthReady) setIsLoading(false);
+      return;
+    }
 
-  const startSession = async (goal: string) => {
-    setAppState('generating');
-    setAiCoachMessage('Connecting to your Harvia sensor and crafting your personalized session...');
-
-    try {
-      // Get current sensor data from Harvia
-      const currentSensorData = await getHarviaSensorData() || sensorData;
-      
-      // Auto-tune settings based on goal and sensor data
-      let targetTemp = 75; // Default
-      let targetHumidity = 15; // Default
-      
-      // Check if user selected custom temperature (experienced users)
-      if (userExperience === 'experienced' && selectedTemp) {
-        targetTemp = selectedTemp;
-      } else if (currentSensorData) {
-        // Adjust based on current conditions and goal for newbies
-        if (goal.toLowerCase().includes('relax') || goal.toLowerCase().includes('stress')) {
-          targetTemp = Math.min(70, currentSensorData.temperature || 70);
-          targetHumidity = Math.min(20, (currentSensorData.humidity || 15) + 5);
-        } else if (goal.toLowerCase().includes('recovery') || goal.toLowerCase().includes('muscle')) {
-          targetTemp = Math.max(80, Math.min(90, (currentSensorData.temperature || 75) + 5));
-          targetHumidity = Math.min(25, (currentSensorData.humidity || 15) + 10);
-        } else if (goal.toLowerCase().includes('performance')) {
-          targetTemp = Math.max(85, Math.min(95, (currentSensorData.temperature || 75) + 10));
-          targetHumidity = Math.min(30, (currentSensorData.humidity || 15) + 15);
+    setIsLoading(true);
+    const userDocRef: DocumentReference<DocumentData> = doc(db, 'artifacts', appId, 'users', userId);
+    
+    const unsub = onSnapshot(userDocRef, (docSnap) => {
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const sessions: SessionData[] = data.sessions || [];
+        const totalSessions = sessions.length;
+        
+        if (totalSessions > 0) {
+          const totalRating = sessions.reduce((acc, s) => acc + (s.rating || 0), 0);
+          const avgRating = parseFloat((totalRating / totalSessions).toFixed(1));
+          const lastSession = sessions[sessions.length - 1];
+          setStats(prevStats => ({
+            ...prevStats,
+            totalSessions,
+            avgRating,
+            lastSession,
+          }));
         } else {
-          // Balanced session
-          targetTemp = Math.max(70, Math.min(85, (currentSensorData.temperature || 75) + 5));
-          targetHumidity = Math.min(25, (currentSensorData.humidity || 15) + 10);
+          setStats({ totalSessions: 0, avgRating: 0, lastSession: null, lastRecommendation: null });
         }
-      }
-
-      // Control Harvia device if we have a device ID (you may need to get this from the API)
-      // await controlHarviaDevice('device-id', targetTemp, targetHumidity);
-
-      const sessionResponse = await fetch(`${API_BASE_URL}/generate_session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          goal, 
-          durationMinutes: 20,
-          targetTemperature: targetTemp,
-          targetHumidity: targetHumidity,
-        }),
-      });
-      if (!sessionResponse.ok) {
-        throw new Error(`Failed to generate session: ${sessionResponse.statusText}`);
-      }
-      const sessionData: SessionProfile = await sessionResponse.json();
-      setSessionProfile(sessionData);
-
-      if (currentSensorData) {
-        setSensorData(currentSensorData);
-      }
-
-      const welcomeMessage = `Your session, '${sessionData.title}', is ready. I've set the temperature to ${targetTemp}°C and humidity to ${targetHumidity}%. ${sessionData.phases[0].coachScript}`;
-      playVoice(welcomeMessage);
-
-      setAiCoachMessage(welcomeMessage);
-      setAppState('session');
-      setSessionTime(0);
-      setCurrentPhaseIndex(0);
-      intervalRef.current = window.setInterval(() => {
-        setSessionTime(prev => prev + 5);
-        pollSensorData();
-      }, 5000);
-
-    } catch (error) {
-      console.error("Failed to start session:", error);
-      setAppState('onboarding');
-      setAiCoachMessage('Could not connect to the sauna. Please try again.');
-    }
-  };
-
-  const pollSensorData = async () => {
-    if (appState !== 'session' || !sessionProfile) return;
-
-    try {
-      const sensorResponse = await fetch(`${API_BASE_URL}/sensor_data`);
-      if (!sensorResponse.ok) {
-        console.error("Sensor poll failed:", sensorResponse.statusText);
-        return;
-      }
-      const newSensorData: SensorData = await sensorResponse.json();
-      setSensorData(newSensorData);
-
-      const interventionResponse = await fetch(`${API_BASE_URL}/get_intervention`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          sessionProfile,
-          currentSensorData: newSensorData,
-          sessionTimeSeconds: sessionTime,
-          currentPhaseIndex,
-        }),
-      });
-      if (!interventionResponse.ok) {
-        console.error("Intervention check failed:", interventionResponse.statusText);
-        return;
-      }
-      const { coachMessage } = await interventionResponse.json();
-      if (coachMessage) {
-        playVoice(coachMessage);
-        setAiCoachMessage(coachMessage);
-      }
-
-    } catch (error) {
-      console.error("Poll error:", error);
-    }
-  };
-
-  const playVoice = async (text: string) => {
-    try {
-      // Use ElevenLabs API if configured, otherwise fall back to backend
-      if (API_CONFIG.USE_ELEVENLABS && API_CONFIG.ELEVENLABS_API_KEY && !API_CONFIG.ELEVENLABS_API_KEY.includes('your-')) {
-        await playElevenLabsVoice(text);
       } else {
-        const response = await fetch(`${API_BASE_URL}/generate_voice`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text }),
-        });
-        if (!response.ok) {
-          throw new Error(`Failed to generate voice: ${response.statusText}`);
-        }
-
-        const audioBlob = await response.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        if (audioRef.current) {
-          audioRef.current.src = audioUrl;
-          audioRef.current.play();
-        }
+        setStats({ totalSessions: 0, avgRating: 0, lastSession: null, lastRecommendation: null });
       }
-    } catch (error) {
-      console.error("Failed to play voice:", error);
-    }
-  };
+      setIsLoading(false);
+    }, (error) => {
+      console.error("Error loading data: ", error);
+      setIsLoading(false);
+    });
 
-  const playElevenLabsVoice = async (text: string) => {
+    return () => unsub();
+
+  }, [isAuthReady, userId]);
+
+  // --- Trigger initial animation on load ---
+  useEffect(() => {
+    if (!isLoading && view.name === 'welcome' && animationStep === 1) {
+      setTimeout(() => {
+        setAnimationStep(2);
+      }, 50);
+    }
+  }, [isLoading, view.name, animationStep]);
+
+  // --- Narration ---
+  const speak = useCallback(async (text: string) => {
+    if (!isNarrationEnabled || !hasInteracted || isSpeaking) return;
+    
+    setIsSpeaking(true);
     try {
-      const response = await fetch('https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM', {
-        method: 'POST',
-        headers: {
-          'Accept': 'audio/mpeg',
-          'Content-Type': 'application/json',
-          'xi-api-key': API_CONFIG.ELEVENLABS_API_KEY,
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
+      
+      const payload = {
+        contents: [{
+          parts: [{ text: `Say in a relaxed, easy-going, medium-pitched voice: ${text}` }]
+        }],
+        generationConfig: {
+          responseModalities: ["AUDIO"],
+          speechConfig: {
+            voiceConfig: {
+              prebuiltVoiceConfig: { voiceName: "Callirrhoe" }
+            }
+          }
         },
-        body: JSON.stringify({
-          text: text,
-          model_id: 'eleven_monolingual_v1',
-          voice_settings: {
-            stability: 0.5,
-            similarity_boost: 0.5,
-          },
-        }),
+        model: "gemini-2.5-flash-preview-tts"
+      };
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
       });
 
       if (!response.ok) {
-        throw new Error(`ElevenLabs API error: ${response.statusText}`);
+        throw new Error(`TTS API request failed with status ${response.status}`);
       }
+      
+      const result = await response.json();
+      const part = result?.candidates?.[0]?.content?.parts?.[0];
+      const audioData = part?.inlineData?.data;
+      const mimeType = part?.inlineData?.mimeType;
 
-      const audioBlob = await response.blob();
-      const audioUrl = URL.createObjectURL(audioBlob);
-      if (audioRef.current) {
-        audioRef.current.src = audioUrl;
-        audioRef.current.play();
-      }
-    } catch (error) {
-      console.error("Failed to play ElevenLabs voice:", error);
-      // Fallback to backend if ElevenLabs fails
-      throw error;
-    }
-  };
-
-  const stopSession = () => {
-    if (intervalRef.current) {
-      clearInterval(intervalRef.current);
-    }
-    setAppState('postSaunaFeedback');
-    setAiCoachMessage('Welcome back! How was your sauna?');
-    playVoice('Welcome back! How was your sauna?');
-  };
-
-  const handleFeedbackSubmit = () => {
-    // After submitting feedback, ask about statistics
-    setAppState('askStatistics');
-  };
-
-  const handleStatisticsQuestion = (show: boolean) => {
-    setShowStats(show);
-    if (show) {
-      setAppState('showStatistics');
-    } else {
-      // Skip statistics, ask about recommendations
-      setAppState('askRecommendations');
-    }
-  };
-
-  const handleRecommendationQuestion = async (wantRecommendations: boolean) => {
-    if (wantRecommendations) {
-      setAppState('recommendations');
-      // Generate recommendations based on feedback
-      const feedbackText = `Rating: ${feedback.rating}/10. Heat: ${feedback.heat}. Music: ${feedback.musicEnjoyment}. Thoughts: ${feedback.thoughts}`;
-      const recs = await generateFeedbackRecommendations(feedbackText);
-      setRecommendations(recs);
-      playVoice(recs);
-    } else {
-      setAppState('summary');
-      setAiCoachMessage('Thank you for using SaunaSensAI! Until next time.');
-      playVoice('Thank you for using SaunaSensAI! Until next time.');
-    }
-  };
-
-  const generateFeedbackRecommendations = async (feedbackText: string) => {
-    try {
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_CONFIG.OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-3.5-turbo',
-          messages: [
-            {
-              role: 'system',
-              content: 'You are SaunaSensAI, a warm and helpful sauna wellness coach. Provide personalized recommendations based on user feedback to improve their next sauna experience.',
-            },
-            {
-              role: 'user',
-              content: `Based on this feedback: ${feedbackText}. What recommendations do you have for their next sauna session?`,
-            },
-          ],
-          temperature: 0.7,
-          max_tokens: 250,
-        }),
-      });
-
-      if (!response.ok) throw new Error('AI recommendation failed');
-      const data = await response.json();
-      return data.choices[0].message.content;
-    } catch (error) {
-      console.error('Feedback recommendation error:', error);
-      return 'Thank you for your feedback! For your next session, I recommend adjusting the temperature based on your comfort level and staying well hydrated.';
-    }
-  };
-
-  // --- UI Renderers ---
-
-  const renderStartPoint = () => (
-    <div className="flex flex-col h-full justify-center items-center p-8 text-center">
-      <h1 className="text-4xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`${colors.textMuted} mb-16`}>Your personalized sauna wellness coach.</p>
-      <button
-        onClick={() => setAppState('welcome')}
-        className={`w-full max-w-xs p-5 rounded-lg text-black text-xl font-medium transition-all hover:shadow-[0_0_25px_rgba(235,15,53,0.8),0_0_45px_rgba(235,15,53,0.5)]`}
-        style={{backgroundColor: colors.accentGold}}
-      >
-        Start Session
-      </button>
-    </div>
-  );
-
-  const renderWelcome = () => {
-    const handleWelcomeComplete = () => {
-      setAppState('steamTransition');
-    };
-    return <AnimatedWelcomeText onAnimationComplete={handleWelcomeComplete} playVoice={playVoice} />;
-  };
-
-  const renderSteamTransition = () => {
-    const handleTransitionComplete = () => {
-      setAppState('followUpQuestion');
-    };
-    return (
-      <>
-        <div className="flex flex-col h-full justify-center p-8 text-center">
-          <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-        </div>
-        <SteamTransition onComplete={handleTransitionComplete} />
-      </>
-    );
-  };
-
-  const renderFollowUpQuestion = () => {
-    const handleQuestionComplete = () => {
-      setAiCoachMessage('Welcome. To perfectly tailor this session, are you new to the sauna, or a familiar guest?');
-      setAppState('onboarding');
-    };
-    return <AnimatedFollowUpQuestion onAnimationComplete={handleQuestionComplete} playVoice={playVoice} />;
-  };
-
-  const startListening = () => {
-    if (recognitionRef.current && !isListening) {
-      setIsListening(true);
-      recognitionRef.current.start();
-    }
-  };
-
-  const stopListening = () => {
-    if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
-      setIsListening(false);
-    }
-  };
-
-  const handleTextSubmit = () => {
-    if (userInput.trim()) {
-      if (appState === 'experiencedFollowUp') {
-        handleGoalResponse(userInput);
+      if (audioData && mimeType && mimeType.startsWith("audio/")) {
+        const pcmData = base64ToArrayBuffer(audioData);
+        await playPcmData(pcmData);
       } else {
-        handleUserResponse(userInput);
+        throw new Error("Invalid TTS response format");
       }
-      setUserInput('');
+    } catch (error) {
+      console.error("TTS Error:", error);
+    } finally {
+      setIsSpeaking(false);
     }
-  };
+  }, [isNarrationEnabled, hasInteracted, isSpeaking]);
 
-  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleTextSubmit();
-    }
-  };
+  // --- Sensor Simulation ---
+  const startSensorSimulation = useCallback((durationMinutes: number, targetTemp: number, onUpdateCallback: (record: SensorRecord) => void) => {
+    let currentTemp = 25;
+    let currentHumidity = 15;
+    const steps = durationMinutes * 60 / 3; // Update every 3 seconds
+    const tempIncrease = (targetTemp - currentTemp) / (steps / 2); // Reach target temp halfway
+    const humidityIncrease = 30 / (steps / 2); // Reach 45% humidity halfway
 
-  const renderNewbieRecommendations = () => {
-    // Calculate ready time
-    const currentTemp = sensorData?.temperature || 20;
-    const recommendedTemp = 70; // Default for newbies
-    const tempDiff = Math.abs(recommendedTemp - currentTemp);
-    const estimatedMinutes = Math.ceil(tempDiff / 5);
+    setSensorHistory([]); // Clear old history
+
+    const simulationInterval = setInterval(() => {
+      if (currentTemp < targetTemp) {
+        currentTemp = Math.min(targetTemp, currentTemp + tempIncrease);
+        currentHumidity = Math.min(45, currentHumidity + humidityIncrease);
+      } else {
+        currentTemp += (Math.random() - 0.5) * 2; // +/- 1 degree
+        currentHumidity += (Math.random() - 0.5); // +/- 0.5%
+      }
+      
+      const newRecord: SensorRecord = {
+        time: (Date.now() / 1000).toFixed(0),
+        temp: Math.round(currentTemp),
+        humidity: Math.round(currentHumidity)
+      };
+      
+      onUpdateCallback(newRecord);
+
+    }, 3000); // Update every 3 seconds
+
+    return () => clearInterval(simulationInterval);
+  }, []);
+  
+  // --- Get Recommendation ---
+  const getRecommendation = (session: SessionData): string => {
+    const { rating, heat, temperature, timer, music, oil } = session;
+    let recText = "For your next session, ";
     
-    return (
-      <div className="flex flex-col h-full justify-between p-6">
-        <div className="flex flex-col justify-center flex-1 p-8 text-center overflow-y-auto">
-          <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-          
-          {/* Recommended Temperature */}
-          <div className={`${colors.card} rounded-lg p-6 mb-6`}>
-            <p className={`text-lg ${colors.text} mb-2`}>Recommended Temperature</p>
-            <p className={`text-4xl font-light ${colors.primary}`} style={{color: colors.accentGold}}>
-              {recommendedTemp}°C
-            </p>
-          </div>
+    const invalidOils = ['shoe', 'frog', 'machine', 'motor'];
+    const oilInput = oil ? oil.toLowerCase().trim() : '';
+    const isOilInvalid = invalidOils.some(invalid => oilInput.includes(invalid));
+    const validOilUsed = oilInput && !isOilInvalid && oilInput !== 'none' && oilInput !== '';
 
-          {/* Tips */}
-          <div className={`text-lg ${colors.text} mb-6 leading-relaxed text-left`}>
-            <p className="font-medium mb-3">Tips for your first sauna:</p>
-            {recommendations.split('\n').slice(0, 5).map((line, i) => (
-              <p key={i} className="mb-2 text-base">• {line}</p>
-            ))}
-          </div>
-
-          {sensorData && (
-            <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-              <p className={`text-sm ${colors.textMuted}`}>
-                Current: {Math.round(sensorData.temperature)}°C, {Math.round(sensorData.humidity)}% humidity
-              </p>
-            </div>
-          )}
-        </div>
-        <div className="p-4 border-t" style={{ borderColor: `${colors.accentGold}30` }}>
-          <button
-            onClick={() => {
-              setSaunaReadyTime(estimatedMinutes);
-              setAppState('saunaReady');
-              playVoice(`Your sauna will be ready in approximately ${estimatedMinutes} minutes. I've set the recommended temperature to ${recommendedTemp}°C.`);
-            }}
-            className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-            style={{backgroundColor: colors.accentGold}}
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    );
-  };
-
-  const renderExperiencedFollowUp = () => (
-    <div className="flex flex-col h-full justify-between p-6">
-      <div className="flex flex-col justify-center flex-1 p-8 text-center">
-        <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-        <p className={`${colors.textMuted} mb-8 min-h-[2rem] text-xl`}>
-          {aiCoachMessage || 'What would you like to achieve with this sauna session?'}
-        </p>
-        {sensorData && (
-          <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-            <p className={`text-sm ${colors.textMuted}`}>
-              Current: {Math.round(sensorData.temperature)}°C, {Math.round(sensorData.humidity)}% humidity
-            </p>
-          </div>
-        )}
-      </div>
-
-      {/* Input Area */}
-      <div className="p-4 border-t" style={{ borderColor: `${colors.accentGold}30` }}>
-        <div className="flex gap-2 items-center mb-2">
-          <input
-            ref={inputRef}
-            type="text"
-            value={userInput}
-            onChange={(e) => setUserInput(e.target.value)}
-            onKeyPress={handleKeyPress}
-            placeholder="Type your goal..."
-            className={`flex-1 p-3 rounded-lg ${colors.card} border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
-            style={{ color: colors.text }}
-          />
-          
-          <button
-            onClick={isListening ? stopListening : startListening}
-            className={`p-3 rounded-lg transition-all ${
-              isListening
-                ? 'bg-red-600'
-                : `${colors.card} border ${colors.border} hover:border-[#eb0f35]`
-            }`}
-            style={{
-              boxShadow: isListening ? `0 0 20px ${colors.accentGold}60` : 'none',
-            }}
-            title={isListening ? 'Stop listening' : 'Start voice input'}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
-              className="w-5 h-5"
-              style={{ color: colors.text }}
-            >
-              {isListening ? (
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M6 18L18 6M6 6l12 12"
-                />
-              ) : (
-                <>
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    d="M19 10v2a7 7 0 01-14 0v-2M12 19v4m-4 0h8"
-                  />
-                </>
-              )}
-            </svg>
-          </button>
-
-          <button
-            onClick={handleTextSubmit}
-            disabled={!userInput.trim()}
-            className={`p-3 rounded-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${colors.primaryBg} text-black`}
-            style={{
-              boxShadow: `0 0 20px ${colors.accentGold}40`,
-            }}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={2}
-              stroke="currentColor"
-              className="w-5 h-5"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"
-              />
-            </svg>
-          </button>
-        </div>
-        {isListening && (
-          <p className="text-sm text-center" style={{ color: colors.accentGold }}>
-            Listening... Speak now
-          </p>
-        )}
-      </div>
-    </div>
-  );
-
-  const ExperienceButton = ({ icon, text, onClick }: { icon: React.ReactNode, text: string, onClick: () => void }) => (
-    <button
-      onClick={onClick}
-      className={`w-full ${colors.card} border ${colors.border} rounded-lg p-6 flex items-center space-x-4 transition-all hover:border-[#eb0f35] hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-    >
-      <div className={`p-3 rounded-full ${colors.bg} ${colors.primary}`}>
-        {icon}
-      </div>
-      <span className="text-lg font-medium text-white">{text}</span>
-    </button>
-  );
-
-  const renderOnboarding = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-4">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`${colors.textMuted} mb-12 min-h-[2rem]`}>
-        {aiCoachMessage || 'Welcome. To perfectly tailor this session, are you new to the sauna, or a familiar guest?'}
-      </p>
-      <div className="grid grid-cols-1 gap-4">
-        <ExperienceButton 
-          icon={<SunIcon />} 
-          text="New to Sauna" 
-          onClick={async () => {
-            setUserExperience('newbie');
-            setAppState('newbieRecommendations');
-            const sensorData = await getHarviaSensorData();
-            const recommendations = await getNewbieRecommendations(sensorData);
-            setRecommendations(recommendations);
-            setSensorData(sensorData);
-            playVoice(recommendations);
-          }} 
-        />
-        <ExperienceButton 
-          icon={<MoonIcon />} 
-          text="Familiar Guest" 
-          onClick={async () => {
-            setUserExperience('experienced');
-            setAppState('experiencedFollowUp');
-            const sensorData = await getHarviaSensorData();
-            setSensorData(sensorData);
-            const followUp = await getGoalFollowUp(sensorData);
-            setAiCoachMessage(followUp);
-            playVoice(followUp);
-          }} 
-        />
-      </div>
-    </div>
-  );
-
-  const renderGenerating = () => (
-    <div className="flex flex-col h-full justify-center items-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-4">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <div className="w-16 h-16 border-4 border-t-[#eb0f35] border-zinc-800 rounded-full animate-spin mb-8"></div>
-      <p className={`${colors.textMuted} max-w-xs`}>{aiCoachMessage}</p>
-    </div>
-  );
-
-  const renderSession = () => {
-    if (!sessionProfile || !sensorData) return renderGenerating();
-
-    const phaseIndex = Math.min(currentPhaseIndex, sessionProfile.phases.length - 1);
-    const currentPhase = sessionProfile.phases[phaseIndex];
-    if (!currentPhase) {
-      console.error("Current phase is undefined.");
-      return renderGenerating();
+    if (heat === 'Too hot' && temperature > 65) {
+      recText += `try lowering the temperature to ${temperature - 2}°C. `;
+    } else if (heat === 'Too cold' && temperature < 95) {
+      recText += `try increasing the temperature to ${temperature + 2}°C. `;
+    } else if (rating < 7) {
+      recText += `let's adjust the temperature to ${temperature + 1}°C. `;
+    } else {
+      recText += `the temperature of ${temperature}°C seems good for you. `;
     }
 
-    const totalDuration = sessionProfile.totalDurationMinutes * 60;
-    const progress = totalDuration > 0 ? (sessionTime / totalDuration) * 100 : 0;
+    if (rating > 7) {
+      recText += `Your duration of ${timer} minutes ${music ? 'with music' : 'without music'} was a great combination. `;
+    } else if (timer < 20) {
+      recText += `You might enjoy a slightly longer session of ${timer + 5} minutes. `;
+    }
 
-    return (
-      <div className="flex flex-col h-full justify-between p-6">
-        <div>
-          <h2 className="text-lg font-medium text-white">{sessionProfile.title}</h2>
-          <p className={`${colors.textMuted} capitalize`}>{currentPhase.type} Phase</p>
-        </div>
+    if (validOilUsed) {
+      recText += `Since you enjoyed ${oil}, you might also like Birch or Pine.`;
+    } else if (rating < 8) {
+      recText += `Consider adding a few drops of Eucalyptus or Peppermint oil to the water for a more refreshing experience.`;
+    }
 
-        <div className="flex flex-col items-center justify-center space-y-4 my-8">
-          <div
-            className="w-48 h-48 rounded-full border-8 border-zinc-800 flex items-center justify-center text-white"
-            style={{
-              background: `conic-gradient(${colors.accentGold} ${progress}%, ${colors.card} ${progress}%)`
-            }}
-          >
-            <div className={`w-[calc(100%-16px)] h-[calc(100%-16px)] rounded-full ${colors.bg} flex flex-col items-center justify-center`}>
-              <span className="text-6xl font-light" style={{color: colors.accentGold}}>{Math.round(sensorData.temperature)}°</span>
-              <span className={`text-lg ${colors.textMuted}`}>C</span>
-            </div>
-          </div>
-
-          <div className="flex space-x-8">
-            <div className="text-center">
-              <span className={`text-2xl font-medium ${colors.text}`}>
-                {Math.round(sensorData.humidity)}<span className="text-sm">%</span>
-              </span>
-              <p className={`${colors.textMuted} text-xs`}>Humidity</p>
-            </div>
-            <div className="text-center">
-              <span className={`text-2xl font-medium ${colors.text}`}>
-                {Math.floor(sessionTime / 60)}:{(sessionTime % 60).toString().padStart(2, '0')}
-              </span>
-              <p className={`${colors.textMuted} text-xs`}>Time</p>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-6">
-          <div className={`p-4 ${colors.card} rounded-lg text-center min-h-[4rem] flex items-center justify-center`}>
-            <p className={colors.text}>{aiCoachMessage}</p>
-          </div>
-          <button
-            onClick={stopSession}
-            className={`w-full p-4 rounded-lg bg-red-600 text-white text-lg font-medium flex items-center justify-center space-x-2 transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-            
-          >
-            <StopIcon />
-            <span>End Session</span>
-          </button>
-        </div>
-      </div>
-    );
+    return recText;
   };
 
-  const renderExperiencedSettings = () => (
-    <div className="flex flex-col h-full justify-between p-6">
-      <div className="flex flex-col justify-center flex-1 p-8 text-center overflow-y-auto">
-        <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
+  // --- Data Saving ---
+  const saveSession = async (feedback: Omit<SessionData, 'timer' | 'temperature' | 'music' | 'sensorHistory' | 'timestamp'>, sessionSensorHistory: SensorRecord[]) => {
+    setIsLoading(true);
+    const newSession: SessionData = {
+      ...saunaSettings,
+      ...feedback,
+      sensorHistory: sessionSensorHistory,
+      timestamp: Date.now()
+    };
+    
+    const recommendation = feedback.recommendations ? getRecommendation(newSession) : "";
+
+    setStats(prevStats => {
+      const newTotalSessions = prevStats.totalSessions + 1;
+      const totalRating = (prevStats.avgRating * prevStats.totalSessions) + feedback.rating;
+      const newAvgRating = parseFloat((totalRating / newTotalSessions).toFixed(1));
+      
+      return {
+        totalSessions: newTotalSessions,
+        avgRating: newAvgRating,
+        lastSession: newSession,
+        lastRecommendation: recommendation
+      };
+    });
+
+    if (isAuthReady && userId && db) {
+      const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+      try {
+        await updateDoc(userDocRef, {
+          sessions: arrayUnion(newSession)
+        });
+        console.log("Session saved to Firebase!");
+      } catch (error: any) {
+        if (error.code === 'not-found') {
+          try {
+            await setDoc(userDocRef, { sessions: [newSession] });
+            console.log("New user doc created and session saved to Firebase!");
+          } catch (e) {
+            console.error("Error creating doc: ", e);
+          }
+        } else {
+          console.error("Error saving session: ", error);
+        }
+      }
+    } else {
+      console.warn("User not authenticated, session only saved locally for this view.");
+    }
+    
+    setIsLoading(false);
+    
+    if (feedback.showStats) {
+      changeView('stats');
+    } else {
+      changeView('goodbye');
+    }
+  };
+  
+  // --- Reset Data Function ---
+  const handleResetData = async () => {
+    if (!isAuthReady || !userId || !db) {
+      console.log("Resetting local state (demo).");
+      setStats({ totalSessions: 0, avgRating: 0, lastSession: null, lastRecommendation: null });
+      setSensorHistory([]);
+      changeView('welcome');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
+      await setDoc(userDocRef, { sessions: [] }, { merge: true }); 
+      console.log("Session data reset!");
+      setSensorHistory([]);
+      setIsLoading(false);
+      changeView('welcome');
+    } catch (error) {
+      console.error("Error resetting data: ", error);
+      setIsLoading(false);
+    }
+  };
+
+  
+  // --- App Context Value ---
+  const appContextValue = React.useMemo(() => ({
+    speak,
+    isSpeaking,
+    isNarrationEnabled,
+    setIsNarrationEnabled
+  }), [speak, isSpeaking, isNarrationEnabled, setIsNarrationEnabled]);
+
+  // --- Render View ---
+  const renderView = () => {
+    if (isLoading) {
+      return (
+        <div className="flex flex-col h-full justify-center items-center p-8 text-center">
+          <h1 className="text-3xl font-light text-white mb-4">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
+          <div className="w-16 h-16 border-4 border-t-[#eb0f35] border-zinc-800 rounded-full animate-spin mb-8"></div>
+          <p className={`${colors.textMuted} max-w-xs`}>Loading...</p>
+        </div>
+      );
+    }
+    switch (view.name) {
+      case 'welcome':
+        return <WelcomeView setView={changeView} stats={stats} animationStep={animationStep} />;
+      case 'newToSauna':
+        return <NewToSaunaView setView={changeView} setSaunaSettings={setSaunaSettings} animationStep={animationStep} />;
+      case 'experiment':
+        return <ExperimentView setView={changeView} setSaunaSettings={setSaunaSettings} animationStep={animationStep} />;
+      case 'recommended':
+        return <RecommendedView setView={changeView} setSaunaSettings={setSaunaSettings} stats={stats} animationStep={animationStep} />;
+      case 'timer':
+        return <TimerView setView={changeView} settings={saunaSettings} onSensorUpdate={startSensorSimulation} animationStep={animationStep} />;
+      case 'feedback':
+        return <FeedbackView setView={changeView} onSave={saveSession} viewPayload={view.payload} animationStep={animationStep} />;
+      case 'stats':
+        return <StatsView setView={changeView} stats={stats} animationStep={animationStep} />;
+      case 'goodbye':
+        return <GoodbyeView setView={changeView} animationStep={animationStep} />;
+      default:
+        return <WelcomeView setView={changeView} stats={stats} animationStep={animationStep} />;
+    }
+  };
+
+  return (
+    <AppContext.Provider value={appContextValue}>
+      <div 
+        className="h-screen w-screen flex justify-center items-center bg-zinc-950 p-4"
+        onClick={() => !hasInteracted && setHasInteracted(true)}
+      >
+        <main className={`relative w-full max-w-sm h-[800px] max-h-[90vh] ${colors.bg} ${colors.text} rounded-3xl shadow-2xl overflow-hidden border-4 ${colors.border}`}>
+          
+          <header className="flex items-center justify-between p-6 pb-0">
+            <h1 className="text-3xl font-light text-white">
+              Sens<span style={{color: colors.accentGold}}>AI</span>
+            </h1>
+            <div className="flex items-center gap-2">
+              {isSpeaking && <Loader className="w-5 h-5 animate-spin" style={{color: colors.accentGold}} />}
+              <button 
+                onClick={() => setIsNarrationEnabled(!isNarrationEnabled)} 
+                className={`p-2 rounded-full transition-colors hover:${colors.card}`}
+              >
+                {isNarrationEnabled ? <Volume2 className="w-5 h-5" /> : <VolumeX className="w-5 h-5 text-gray-500" />}
+              </button>
+            </div>
+          </header>
+
+          <main className="h-[calc(100%_-_68px)]"> {/* Main content area */}
+            {renderView()}
+          </main>
+          
+          <button
+            onClick={handleResetData}
+            className={`absolute bottom-4 right-4 p-2 ${colors.primaryBg} text-black rounded-full transition-all hover:shadow-[0_0_15px_rgba(235,15,53,0.8)] z-50`}
+            title="Reset All Session Data (Demo)"
+          >
+            <Power className="w-4 h-4" />
+          </button>
+          
+          <style>{`
+            .phrase-container {
+              display: flex;
+              flex-direction: column;
+              height: 100%;
+              padding: 1.5rem; /* 24px */
+              padding-top: 1rem;
+            }
+            
+            .phrase-animated {
+              transition: all 0.4s ease-out;
+              transform-origin: center;
+              will-change: transform, font-size, opacity;
+            }
+            
+            .options-hidden {
+              opacity: 0;
+              transform: translateY(10px);
+              transition: all 0.3s ease-out 0s;
+              visibility: hidden;
+            }
+            
+            .options-visible {
+              opacity: 1;
+              transform: translateY(0);
+              transition: all 0.3s ease-out 0s;
+              visibility: visible;
+            }
+          `}</style>
+        </main>
+      </div>
+    </AppContext.Provider>
+  );
+}
+
+// --- Custom Hook for Narration ---
+function useSpeak(text: string, animationStep: number, speakOnStep: number) {
+  const context = useContext(AppContext);
+  if (!context) throw new Error('useSpeak must be used within an AppProvider');
+  
+  const { speak } = context;
+  const hasSpoken = useRef(false);
+
+  useEffect(() => {
+    if (animationStep === speakOnStep && !hasSpoken.current) {
+      speak(text);
+      hasSpoken.current = true;
+    }
+    if (animationStep === 1) { // Reset on animation reset
+      hasSpoken.current = false;
+    }
+  }, [animationStep, speakOnStep, text, speak]);
+}
+
+// --- Views ---
+
+interface ViewProps {
+  setView: (view: string, payload?: any) => void;
+  animationStep: number;
+}
+
+interface WelcomeViewProps extends ViewProps {
+  stats: Stats;
+}
+
+function WelcomeView({ setView, stats, animationStep }: WelcomeViewProps) {
+  const phrase = "Greetings! I am your personal sauna assistant, SensAI. How would you like to proceed?";
+  
+  useSpeak(phrase, animationStep, 1);
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-8`
+  }`; 
+
+  const showRecommended = stats && stats.totalSessions >= 2;
+
+  return (
+    <div className="phrase-container justify-center">
+      <p id="welcome-text" className={phraseClass}>
+        {phrase} 
+      </p>
+      
+      <div className={`flex flex-col gap-4 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        <Button onClick={() => setView('newToSauna')} icon={<SunIcon />}>New to sauna</Button>
+        <Button onClick={() => setView('experiment')} icon={<MoonIcon />}>Experiment mode</Button>
+        {showRecommended && (
+          <Button onClick={() => setView('recommended')} icon={<Star className="w-5 h-5 mr-2" />}>
+            Recommended Settings
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+interface NewToSaunaViewProps extends ViewProps {
+  setSaunaSettings: React.Dispatch<React.SetStateAction<SaunaSettings>>;
+}
+
+function NewToSaunaView({ setView, setSaunaSettings, animationStep }: NewToSaunaViewProps) {
+  const [timer, setTimer] = useState(15);
+  const recommendedTemp = 75;
+  
+  const phrase = "Please select your duration.";
+  useSpeak(phrase, animationStep, 1);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaunaSettings({ 
+      timer, 
+      temperature: recommendedTemp, 
+      music: false 
+    });
+    setView('timer');
+  };
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+
+  return (
+    <form onSubmit={handleSubmit} className="phrase-container">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`space-y-6 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        <p className={colors.textMuted}>For new users, we recommend the following settings to start.</p>
         
-        {/* Set Temperature */}
-        <div className={`${colors.card} rounded-lg p-6 mb-6`}>
-          <p className={`text-lg ${colors.text} mb-6`}>Set Temperature</p>
-          <div className="mb-4">
-            <span className={`text-5xl font-light ${colors.primary}`} style={{color: colors.accentGold}}>
-              {selectedTemp}°C
-            </span>
-          </div>
+        <div className={`${colors.card} rounded-lg p-4 space-y-3`}>
+          <h3 className="text-lg font-medium flex items-center" style={{color: colors.accentGold}}>
+            <BookOpen className="w-5 h-5 mr-2" />
+            Beginner Tips
+          </h3>
+          <ul className="list-inside list-none space-y-2 ${colors.textMuted} text-sm">
+            <li className="flex items-center gap-2">
+              <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <span>Hydrate well before, during, and after.</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <span>Start with 10-15 minutes.</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <span>Listen to your body. Leave if you feel dizzy.</span>
+            </li>
+            <li className="flex items-center gap-2">
+              <Star className="w-4 h-4 text-yellow-500 flex-shrink-0" />
+              <span>Cool down with a lukewarm shower.</span>
+            </li>
+          </ul>
+        </div>
+        
+        <div className={`${colors.card} rounded-lg p-4`}>
+          <label className={`block text-lg font-medium ${colors.textMuted}`}>Recommended Temperature:</label>
+          <p className="text-3xl font-bold" style={{color: colors.accentGold}}>{recommendedTemp}°C</p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="timer-select" className="block text-lg font-medium">Session Duration:</label>
+          <select
+            id="timer-select"
+            value={timer}
+            onChange={(e) => setTimer(Number(e.target.value))}
+            className={`w-full p-3 ${colors.card} ${colors.text} rounded-lg border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
+          >
+            <option value={10}>10 minutes</option>
+            <option value={15}>15 minutes</option>
+          </select>
+        </div>
+        
+        <p className={`text-sm ${colors.textMuted}`}>Sauna will be ready in 2 minutes... (This is a simulation).</p>
+        
+        <div className="flex gap-4">
+          <Button type="button" onClick={() => setView('welcome')} variant="secondary">Back</Button>
+          <Button type="submit">Start</Button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+interface ExperimentViewProps extends ViewProps {
+  setSaunaSettings: React.Dispatch<React.SetStateAction<SaunaSettings>>;
+}
+
+function ExperimentView({ setView, setSaunaSettings, animationStep }: ExperimentViewProps) {
+  const [timer, setTimer] = useState(20);
+  const [temperature, setTemperature] = useState(80);
+  const [music, setMusic] = useState(false);
+  
+  const phrase = "Please choose your settings.";
+  useSpeak(phrase, animationStep, 1);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaunaSettings({ timer, temperature, music });
+    setView('timer');
+  };
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+
+  return (
+    <form onSubmit={handleSubmit} className="phrase-container">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`space-y-6 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+
+        {/* Temperature Selection */}
+        <div className={`${colors.card} rounded-lg p-6`}>
+          <label htmlFor="temp-slider" className="block text-lg font-medium mb-4">Temperature: <span className="text-2xl font-bold" style={{color: colors.accentGold}}>{temperature}°C</span></label>
           <input
+            id="temp-slider"
             type="range"
             min="60"
             max="100"
-            step="5"
-            value={selectedTemp}
-            onChange={(e) => setSelectedTemp(Number(e.target.value))}
+            step="1"
+            value={temperature}
+            onChange={(e) => setTemperature(Number(e.target.value))}
             className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
             style={{
-              background: `linear-gradient(to right, ${colors.accentGold} 0%, ${colors.accentGold} ${((selectedTemp - 60) / 40) * 100}%, #27272a ${((selectedTemp - 60) / 40) * 100}%, #27272a 100%)`,
+              background: `linear-gradient(to right, ${colors.accentGold} 0%, ${colors.accentGold} ${((temperature - 60) / 40) * 100}%, #27272a ${((temperature - 60) / 40) * 100}%, #27272a 100%)`,
             }}
           />
-          <div className="flex justify-between text-xs mt-2" style={{color: colors.textMuted}}>
+          <div className={`flex justify-between text-xs mt-2 ${colors.textMuted}`}>
             <span>60°C</span>
             <span>100°C</span>
           </div>
         </div>
 
-        {/* Set Timer */}
-        <div className={`${colors.card} rounded-lg p-6 mb-6`}>
-          <p className={`text-lg ${colors.text} mb-6`}>Set Timer</p>
-          <div className="mb-4">
-            <span className={`text-5xl font-light ${colors.primary}`} style={{color: colors.accentGold}}>
-              {selectedTimer} min
-            </span>
-          </div>
+        {/* Timer Selection */}
+        <div className={`${colors.card} rounded-lg p-6`}>
+          <label htmlFor="timer-exp" className="block text-lg font-medium mb-4">Session Duration: <span className="text-2xl font-bold" style={{color: colors.accentGold}}>{timer} min</span></label>
           <input
+            id="timer-exp"
             type="range"
             min="5"
             max="60"
             step="5"
-            value={selectedTimer}
-            onChange={(e) => setSelectedTimer(Number(e.target.value))}
+            value={timer}
+            onChange={(e) => setTimer(Number(e.target.value))}
             className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
             style={{
-              background: `linear-gradient(to right, ${colors.accentGold} 0%, ${colors.accentGold} ${((selectedTimer - 5) / 55) * 100}%, #27272a ${((selectedTimer - 5) / 55) * 100}%, #27272a 100%)`,
+              background: `linear-gradient(to right, ${colors.accentGold} 0%, ${colors.accentGold} ${((timer - 5) / 55) * 100}%, #27272a ${((timer - 5) / 55) * 100}%, #27272a 100%)`,
             }}
           />
-          <div className="flex justify-between text-xs mt-2" style={{color: colors.textMuted}}>
+          <div className={`flex justify-between text-xs mt-2 ${colors.textMuted}`}>
             <span>5 min</span>
             <span>60 min</span>
           </div>
         </div>
-
-        {/* Music Toggle */}
-        <div className={`${colors.card} rounded-lg p-6 mb-4`}>
-          <p className={`text-lg ${colors.text} mb-4`}>Music Involved?</p>
-          <button
-            onClick={() => setMusicEnabled(!musicEnabled)}
-            className={`w-full p-4 rounded-lg transition-all border-2 ${
-              musicEnabled 
-                ? `${colors.primaryBg} border-[#eb0f35]` 
-                : `${colors.border} border hover:border-[#eb0f35]`
-            }`}
-            style={{
-              color: musicEnabled ? 'black' : colors.text,
-              backgroundColor: musicEnabled ? colors.accentGold : 'transparent',
-              boxShadow: musicEnabled ? `0 0 20px ${colors.accentGold}40` : 'none',
-            }}
-          >
-            {musicEnabled ? '✓ Music Enabled' : 'Enable Music'}
-          </button>
-        </div>
-      </div>
-
-      <div className="p-4 border-t" style={{ borderColor: `${colors.accentGold}30` }}>
-        <p className={`text-sm ${colors.textMuted} mb-4 text-center`}>
-          These are your chosen settings. Confirm?
-        </p>
-        <button
-          onClick={confirmExperiencedSettings}
-          className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-          style={{backgroundColor: colors.accentGold}}
-        >
-          Confirm
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderSaunaReady = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <div className={`${colors.card} rounded-lg p-8 mb-8`}>
-        <p className={`text-2xl ${colors.text} mb-4`}>Sauna will be ready in</p>
-        <p className={`text-6xl font-light ${colors.primary}`} style={{color: colors.accentGold}}>
-          {saunaReadyTime}
-        </p>
-        <p className={`text-xl ${colors.textMuted} mt-2`}>minutes</p>
-      </div>
-      <button
-        onClick={startSaunaTime}
-        className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-        style={{backgroundColor: colors.accentGold}}
-      >
-        Sauna Time! 🕒
-      </button>
-    </div>
-  );
-
-  const renderPostSaunaFeedback = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`text-2xl ${colors.text} mb-12`}>
-        {aiCoachMessage || 'Welcome back! How was your sauna?'}
-      </p>
-      <button
-        onClick={handleFeedbackSubmit}
-        className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-        style={{backgroundColor: colors.accentGold}}
-      >
-        Share Feedback
-      </button>
-    </div>
-  );
-
-  const renderFeedbackQuestions = () => (
-    <div className="flex flex-col h-full justify-between p-6 overflow-y-auto">
-      <div className="flex flex-col flex-1 p-6">
-        <h1 className="text-2xl font-light text-white mb-6 text-center">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
         
-        {/* Question 1: Rating */}
-        <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-          <p className={`text-lg ${colors.text} mb-3`}>1. Rate overall sauna experience (1-10)</p>
-          <div className="flex gap-2 justify-center flex-wrap">
-            {Array.from({ length: 10 }, (_, i) => i + 1).map((num) => (
-              <button
-                key={num}
-                onClick={() => setFeedback({...feedback, rating: num})}
-                className={`w-10 h-10 rounded-lg transition-all ${
-                  feedback.rating === num ? colors.primaryBg : `${colors.border} border`
-                }`}
-                style={{
-                  color: feedback.rating === num ? 'black' : colors.text,
-                  backgroundColor: feedback.rating === num ? colors.accentGold : 'transparent',
-                }}
-              >
-                {num}
-              </button>
-            ))}
-          </div>
+        {/* Music Selection */}
+        <div className={`${colors.card} rounded-lg p-4 flex justify-between items-center`}>
+          <label className="text-lg font-medium">Music involved?</label>
+          <SwitchToggle enabled={music} setEnabled={setMusic} />
         </div>
 
-        {/* Question 2: Heat */}
-        <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-          <p className={`text-lg ${colors.text} mb-3`}>2. How was the heat?</p>
-          <div className="flex flex-col gap-2">
-            {['Not enough', 'Just right', 'Too hot'].map((option) => (
-              <button
-                key={option}
-                onClick={() => setFeedback({...feedback, heat: option})}
-                className={`p-3 rounded-lg transition-all text-left ${
-                  feedback.heat === option ? colors.primaryBg : `${colors.border} border`
-                }`}
-                style={{
-                  color: feedback.heat === option ? 'black' : colors.text,
-                  backgroundColor: feedback.heat === option ? colors.accentGold : 'transparent',
-                }}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </div>
+        <p className={`text-sm ${colors.textMuted} text-center`}>Are these your chosen settings? Confirm?</p>
 
-        {/* Question 3: Music (if enabled) */}
-        {musicEnabled && (
-          <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-            <p className={`text-lg ${colors.text} mb-3`}>3. Did you enjoy the music? *</p>
-            <div className="flex gap-2">
-              {['Yes', 'No'].map((option) => (
-                <button
-                  key={option}
-                  onClick={() => setFeedback({...feedback, musicEnjoyment: option})}
-                  className={`flex-1 p-3 rounded-lg transition-all ${
-                    feedback.musicEnjoyment === option ? colors.primaryBg : `${colors.border} border`
-                  }`}
-                  style={{
-                    color: feedback.musicEnjoyment === option ? 'black' : colors.text,
-                    backgroundColor: feedback.musicEnjoyment === option ? colors.accentGold : 'transparent',
-                  }}
-                >
-                  {option}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        {/* Question 4: Thoughts */}
-        <div className={`${colors.card} rounded-lg p-4 mb-4`}>
-          <p className={`text-lg ${colors.text} mb-3`}>4. What are your thoughts on this sauna experience?</p>
-          <textarea
-            value={feedback.thoughts}
-            onChange={(e) => setFeedback({...feedback, thoughts: e.target.value})}
-            placeholder="Share your thoughts..."
-            className={`w-full p-3 rounded-lg ${colors.bg} border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
-            style={{ color: colors.text, minHeight: '100px' }}
-          />
+        <div className="flex gap-4">
+          <Button type="button" onClick={() => setView('welcome')} variant="secondary">Back</Button>
+          <Button type="submit">Confirm</Button>
         </div>
       </div>
-
-      <div className="p-4 border-t" style={{ borderColor: `${colors.accentGold}30` }}>
-        <button
-          onClick={handleFeedbackSubmit}
-          disabled={!feedback.rating || !feedback.heat}
-          className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-          style={{backgroundColor: colors.accentGold}}
-        >
-          Submit Feedback
-        </button>
-      </div>
-    </div>
+    </form>
   );
+}
 
-  const renderAskStatistics = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`text-2xl ${colors.text} mb-12`}>
-        Would you like to see some statistics from your visit?
-      </p>
-      <div className="flex gap-4">
-        <button
-          onClick={() => handleStatisticsQuestion(true)}
-          className={`flex-1 p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-          style={{backgroundColor: colors.accentGold}}
-        >
-          Yes
-        </button>
-        <button
-          onClick={() => handleStatisticsQuestion(false)}
-          className={`flex-1 p-4 rounded-lg border ${colors.border} text-lg font-medium transition-all hover:border-[#eb0f35]`}
-          style={{color: colors.text}}
-        >
-          No
-        </button>
-      </div>
-    </div>
-  );
+interface RecommendedViewProps extends ViewProps {
+  setSaunaSettings: React.Dispatch<React.SetStateAction<SaunaSettings>>;
+  stats: Stats;
+}
 
-  const renderAskRecommendations = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <p className={`text-2xl ${colors.text} mb-12`}>
-        Would you like to get recommendations based on your review?
-      </p>
-      <div className="flex gap-4">
-        <button
-          onClick={() => handleRecommendationQuestion(true)}
-          className={`flex-1 p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-          style={{backgroundColor: colors.accentGold}}
-        >
-          Yes
-        </button>
-        <button
-          onClick={() => handleRecommendationQuestion(false)}
-          className={`flex-1 p-4 rounded-lg border ${colors.border} text-lg font-medium transition-all hover:border-[#eb0f35]`}
-          style={{color: colors.text}}
-        >
-          No
-        </button>
-      </div>
-    </div>
-  );
+function RecommendedView({ setView, setSaunaSettings, stats, animationStep }: RecommendedViewProps) {
+  const calculateRecommendation = () => {
+    if (!stats.lastSession) return 75;
+    const { temperature, heat } = stats.lastSession;
+    if (heat === 'Too hot') return Math.max(60, temperature - 2);
+    if (heat === 'Too cold') return Math.min(100, temperature + 2);
+    return temperature;
+  };
+  
+  const recommendedTemp = calculateRecommendation();
+  const [timer, setTimer] = useState(stats.lastSession?.timer || 15);
+  const [music, setMusic] = useState(stats.lastSession?.music || false);
+  
+  const phrase = `Your average rating is ${stats.avgRating}/10! Based on your last session, here are our recommendations.`;
+  
+  useSpeak(phrase, animationStep, 1);
 
-  const renderShowStatistics = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center overflow-y-auto">
-      <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-      <div className={`${colors.card} rounded-lg p-6 mb-8`}>
-        <h3 className="text-xl text-white mb-6">Session Statistics</h3>
-        <div className="space-y-4">
-          <div className="flex justify-between items-center">
-            <span className={colors.textMuted}>Duration</span>
-            <span className={`text-2xl font-medium ${colors.text}`}>{Math.round(sessionTime / 60)} min</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className={colors.textMuted}>Peak Temperature</span>
-            <span className={`text-2xl font-medium ${colors.text}`}>{sensorData?.temperature ? Math.round(sensorData.temperature) : '...'}°C</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className={colors.textMuted}>Average Humidity</span>
-            <span className={`text-2xl font-medium ${colors.text}`}>{sensorData?.humidity ? Math.round(sensorData.humidity) : '...'}%</span>
-          </div>
-          <div className="flex justify-between items-center">
-            <span className={colors.textMuted}>Experience Rating</span>
-            <span className={`text-2xl font-medium ${colors.text}`}>{feedback.rating}/10</span>
-          </div>
-        </div>
-      </div>
-      <button
-        onClick={() => setAppState('askRecommendations')}
-        className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-        style={{backgroundColor: colors.accentGold}}
-      >
-        Continue
-      </button>
-    </div>
-  );
-
-  const renderRecommendations = () => (
-    <div className="flex flex-col h-full justify-between p-6">
-      <div className="flex flex-col justify-center flex-1 p-8 text-center overflow-y-auto">
-        <h1 className="text-3xl font-light text-white mb-8">Sauna Sens<span style={{color: colors.accentGold}}>AI</span></h1>
-        <div className={`text-lg ${colors.text} mb-8 leading-relaxed text-left`}>
-          {recommendations.split('\n').map((line, i) => (
-            <p key={i} className="mb-4">{line}</p>
-          ))}
-        </div>
-      </div>
-      <div className="p-4 border-t" style={{ borderColor: `${colors.accentGold}30` }}>
-        <button
-          onClick={() => {
-            setAppState('summary');
-            setAiCoachMessage('Thank you for using SaunaSensAI! Until next time.');
-            playVoice('Thank you for using SaunaSensAI! Until next time.');
-          }}
-          className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-          style={{backgroundColor: colors.accentGold}}
-        >
-          Done
-        </button>
-      </div>
-    </div>
-  );
-
-  const renderSummary = () => (
-    <div className="flex flex-col h-full justify-center p-8 text-center">
-      <h1 className="text-3xl font-light text-white mb-2">Thank You!</h1>
-      <p className="text-xl font-medium mb-8" style={{color: colors.accentGold}}>
-        {aiCoachMessage || 'Thank you for using SaunaSensAI! Until next time.'}
-      </p>
-      <button
-        onClick={() => {
-          setAppState('startPoint');
-          setAiCoachMessage('');
-          setFeedback({ rating: 0, heat: '', musicEnjoyment: '', thoughts: '' });
-          setUserInput('');
-        }}
-        className={`w-full p-4 rounded-lg text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`}
-        style={{backgroundColor: colors.accentGold}}
-      >
-        Start New Session
-      </button>
-    </div>
-  );
-
-  const renderContent = () => {
-    switch (appState) {
-      case 'startPoint': return renderStartPoint();
-      case 'welcome': return renderWelcome();
-      case 'steamTransition': return renderSteamTransition();
-      case 'followUpQuestion': return renderFollowUpQuestion();
-      case 'onboarding': return renderOnboarding();
-      case 'newbieRecommendations': return renderNewbieRecommendations();
-      case 'experiencedFollowUp': return renderExperiencedFollowUp();
-      case 'experiencedSettings': return renderExperiencedSettings();
-      case 'saunaReady': return renderSaunaReady();
-      case 'generating': return renderGenerating();
-      case 'session': return renderSession();
-      case 'postSaunaFeedback': return renderPostSaunaFeedback();
-      case 'feedbackQuestions': return renderFeedbackQuestions();
-      case 'askStatistics': return renderAskStatistics();
-      case 'showStatistics': return renderShowStatistics();
-      case 'askRecommendations': return renderAskRecommendations();
-      case 'recommendations': return renderRecommendations();
-      case 'summary': return renderSummary();
-      default: return renderStartPoint();
-    }
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setSaunaSettings({ 
+      timer, 
+      temperature: recommendedTemp, 
+      music 
+    });
+    setView('timer');
   };
 
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+
   return (
-    <div className="h-screen w-screen flex justify-center items-center bg-zinc-950 p-4">
-      <main className={`relative w-full max-w-sm h-[800px] max-h-[90vh] ${colors.bg} ${colors.text} rounded-3xl shadow-2xl overflow-hidden border-4 ${colors.border}`}>
-        {renderContent()}
-        <audio ref={audioRef} hidden />
-      </main>
+    <form onSubmit={handleSubmit} className="phrase-container">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`space-y-6 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        
+        <div className={`${colors.card} rounded-lg p-4`}>
+          <label className={`block text-lg font-medium ${colors.textMuted}`}>Recommended Temperature:</label>
+          <p className="text-3xl font-bold" style={{color: colors.accentGold}}>{recommendedTemp}°C</p>
+        </div>
+
+        <div className="space-y-2">
+          <label htmlFor="timer-select" className="block text-lg font-medium">Session Duration:</label>
+          <select
+            id="timer-select"
+            value={timer}
+            onChange={(e) => setTimer(Number(e.target.value))}
+            className={`w-full p-3 ${colors.card} ${colors.text} rounded-lg border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
+          >
+            <option value={10}>10 minutes</option>
+            <option value={15}>15 minutes</option>
+            <option value={20}>20 minutes</option>
+            <option value={25}>25 minutes</option>
+          </select>
+        </div>
+        
+        <div className={`${colors.card} rounded-lg p-4 flex justify-between items-center`}>
+          <label className="text-lg font-medium">Music involved?</label>
+          <SwitchToggle enabled={music} setEnabled={setMusic} />
+        </div>
+        
+        <p className={`text-sm ${colors.textMuted}`}>Sauna will be ready in 2 minutes... (This is a simulation).</p>
+        
+        <div className="flex gap-4">
+          <Button type="button" onClick={() => setView('welcome')} variant="secondary">Back</Button>
+          <Button type="submit">Start</Button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+
+interface TimerViewProps extends ViewProps {
+  settings: SaunaSettings;
+  onSensorUpdate: (durationMinutes: number, targetTemp: number, onUpdateCallback: (record: SensorRecord) => void) => () => void;
+}
+
+const TimerView = React.memo(({ setView, settings, onSensorUpdate, animationStep }: TimerViewProps) => {
+  const { timer, temperature } = settings;
+  const [timeLeft, setTimeLeft] = useState(timer * 60);
+  const [liveData, setLiveData] = useState({ temp: 25, humidity: 15 });
+  const [localSensorHistory, setLocalSensorHistory] = useState<SensorRecord[]>([]);
+  
+  const phrase = "Sauna time!";
+  
+  const handleSensorUpdate = useCallback((newRecord: SensorRecord) => {
+    setLiveData({ temp: newRecord.temp, humidity: newRecord.humidity });
+    setLocalSensorHistory(prevHistory => [...prevHistory, newRecord]);
+  }, []);
+
+  useEffect(() => {
+    const stopSimulation = onSensorUpdate(timer, temperature, handleSensorUpdate);
+    return stopSimulation;
+  }, [timer, temperature, onSensorUpdate, handleSensorUpdate]);
+
+  useEffect(() => {
+    if (timeLeft <= 0) {
+      setView('feedback', { sensorHistory: localSensorHistory });
+      return;
+    }
+    const interval = setInterval(() => {
+      setTimeLeft(prev => prev - 1);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [timeLeft, setView, localSensorHistory]);
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
+  };
+  
+  const progress = timer * 60 > 0 ? ((timer * 60 - timeLeft) / (timer * 60)) * 100 : 0;
+
+  return (
+    <div className="phrase-container justify-center">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`flex flex-col items-center justify-center space-y-8 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        
+        {/* Timer Dial (from original App.tsx) */}
+        <div
+          className="w-48 h-48 rounded-full border-8 border-zinc-800 flex items-center justify-center text-white"
+          style={{
+            background: `conic-gradient(${colors.accentGold} ${progress}%, ${colors.card} ${progress}%)`
+          }}
+        >
+          <div className={`w-[calc(100%-16px)] h-[calc(100%-16px)] rounded-full ${colors.bg} flex flex-col items-center justify-center`}>
+            <span className="text-6xl font-light" style={{fontFamily: 'Nunito, sans-serif'}}>
+              {formatTime(timeLeft)}
+            </span>
+          </div>
+        </div>
+
+        {/* Live Data Display */}
+        <div className="flex justify-around w-full px-4">
+          <div className="text-center">
+            <span className={`text-sm ${colors.textMuted}`}>TARGET TEMP</span>
+            <div className="flex items-baseline justify-center gap-1">
+              <Thermometer className="w-5 h-5" style={{color: colors.accentGold}} />
+              <span className="text-2xl font-bold" style={{color: colors.accentGold}}>{temperature}°C</span>
+            </div>
+          </div>
+          <div className="text-center">
+            <span className={`text-sm ${colors.textMuted}`}>LIVE TEMP</span>
+            <div className="flex items-baseline justify-center gap-1">
+              <Thermometer className="w-5 h-5" style={{color: colors.accentGold}} />
+              <span className="text-2xl font-bold" style={{color: colors.accentGold}}>{liveData.temp}°C</span>
+            </div>
+          </div>
+          <div className="text-center">
+            <span className={`text-sm ${colors.textMuted}`}>HUMIDITY</span>
+            <div className="flex items-baseline justify-center gap-1">
+              <Droplet className="w-5 h-5 text-blue-400" />
+              <span className="text-2xl font-bold text-blue-400">{liveData.humidity}%</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="w-full px-4 pt-4">
+          <Button 
+            type="button" 
+            onClick={() => setView('feedback', { sensorHistory: localSensorHistory })} 
+            variant="secondary"
+          >
+            End Session Early
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+});
+
+interface FeedbackViewProps extends ViewProps {
+  onSave: (feedback: Omit<SessionData, 'timer' | 'temperature' | 'music' | 'sensorHistory' | 'timestamp'>, sessionSensorHistory: SensorRecord[]) => void;
+  viewPayload: any;
+}
+
+function FeedbackView({ setView, onSave, viewPayload, animationStep }: FeedbackViewProps) {
+  const [fields, setFields] = useState({
+    rating: 5,
+    heat: 'Just right' as 'Too cold' | 'Just right' | 'Too hot',
+    oil: '',
+    thoughts: '',
+    recommendations: false,
+    showStats: true,
+  });
+  
+  const phrase = "Welcome back. How was your sauna?";
+  useSpeak(phrase, animationStep, 1);
+
+  const setField = (field: keyof typeof fields, value: any) => {
+    setFields(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const sensorHistory = viewPayload?.sensorHistory || [];
+    onSave(fields, sensorHistory);
+  };
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+
+  return (
+    <form onSubmit={handleSubmit} className="phrase-container">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`space-y-4 w-full overflow-y-auto max-h-[calc(100%-80px)] p-1 ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        
+        {/* 1. Overall Rating */}
+        <fieldset className={`${colors.card} rounded-lg p-4`}>
+          <legend className="text-lg font-medium flex items-center mb-3"><Star className="w-5 h-5 mr-2 text-yellow-500" />Rate overall sauna experience (1-10)</legend>
+          <input
+            type="range"
+            min="1"
+            max="10"
+            value={fields.rating}
+            onChange={(e) => setField('rating', Number(e.target.value))}
+            className="w-full h-2 bg-zinc-800 rounded-lg appearance-none cursor-pointer"
+            style={{
+              background: `linear-gradient(to right, ${colors.accentGold} 0%, ${colors.accentGold} ${((fields.rating - 1) / 9) * 100}%, #27272a ${((fields.rating - 1) / 9) * 100}%, #27272a 100%)`,
+            }}
+          />
+          <div className="text-center text-xl font-bold mt-2" style={{color: colors.accentGold}}>{fields.rating}</div>
+        </fieldset>
+        
+        {/* 2. Heat Level */}
+        <fieldset className={`${colors.card} rounded-lg p-4`}>
+          <legend className="text-lg font-medium flex items-center mb-3"><Thermometer className="w-5 h-5 mr-2" style={{color: colors.accentGold}} />How was the heat?</legend>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <RadioPill name="heat" value="Too cold" checked={fields.heat === 'Too cold'} onChange={(e) => setField('heat', e.target.value)} label="Not enough" />
+            <RadioPill name="heat" value="Just right" checked={fields.heat === 'Just right'} onChange={(e) => setField('heat', e.target.value)} label="Just right" />
+            <RadioPill name="heat" value="Too hot" checked={fields.heat === 'Too hot'} onChange={(e) => setField('heat', e.target.value)} label="Too hot" />
+          </div>
+        </fieldset>
+        
+        {/* 3. Oil Used */}
+        <fieldset className={`${colors.card} rounded-lg p-4`}>
+          <legend className="text-lg font-medium flex items-center mb-3"><Wind className="w-5 h-5 mr-2 text-blue-400" />Did you use any oils?</legend>
+          <input
+            type="text"
+            value={fields.oil}
+            onChange={(e) => setField('oil', e.target.value)}
+            placeholder="e.g., Eucalyptus, Birch..."
+            className={`w-full p-3 ${colors.card} ${colors.text} rounded-lg border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
+          />
+        </fieldset>
+        
+        {/* 4. Thoughts */}
+        <fieldset className={`${colors.card} rounded-lg p-4`}>
+          <legend className="text-lg font-medium mb-3">What are your thoughts on this sauna experience?</legend>
+          <textarea
+            value={fields.thoughts}
+            onChange={(e) => setField('thoughts', e.target.value)}
+            rows={3}
+            placeholder="Share your thoughts..."
+            className={`w-full p-3 ${colors.card} ${colors.text} rounded-lg border ${colors.border} focus:border-[#eb0f35] focus:outline-none focus:ring-2 focus:ring-[#eb0f35]/50`}
+          />
+        </fieldset>
+        
+        {/* 5. Recommendations */}
+        <fieldset className={`${colors.card} rounded-lg p-4 flex justify-between items-center`}>
+          <legend className="text-lg font-medium">Get recommendations?</legend>
+          <SwitchToggle enabled={fields.recommendations} setEnabled={(val) => setField('recommendations', val)} />
+        </fieldset>
+        
+        {/* 6. Show Stats */}
+        <fieldset className={`${colors.card} rounded-lg p-4 flex justify-between items-center`}>
+          <legend className="text-lg font-medium">Show statistics?</legend>
+          <SwitchToggle enabled={fields.showStats} setEnabled={(val) => setField('showStats', val)} />
+        </fieldset>
+
+        <div className="flex gap-4 pt-4">
+          <Button type="button" onClick={() => setView('welcome')} variant="secondary">Cancel</Button>
+          <Button type="submit">Submit</Button>
+        </div>
+      </div>
+    </form>
+  );
+}
+
+interface StatsViewProps extends ViewProps {
+  stats: Stats;
+}
+
+function StatsView({ setView, stats, animationStep }: StatsViewProps) {
+  const { lastSession, lastRecommendation, totalSessions, avgRating } = stats;
+  
+  const phrase = "Session Statistics";
+  useSpeak(
+    lastRecommendation || "Here are your session statistics.", 
+    animationStep, 
+    1
+  );
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-6`
+  }`;
+  
+  const data = lastSession?.sensorHistory || [];
+
+  return (
+    <div className="phrase-container">
+      <h2 className={phraseClass}>
+        {phrase}
+      </h2>
+      
+      <div className={`space-y-6 w-full overflow-y-auto max-h-[calc(100%-80px)] p-1 ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        
+        {!lastSession ? (
+          <p>No session data found.</p>
+        ) : (
+          <div className={`${colors.card} rounded-lg p-4 space-y-4`}>
+            {lastRecommendation && (
+              <div className="pb-4 border-b ${colors.border}">
+                <h3 className="text-lg font-semibold flex items-center gap-2" style={{color: colors.accentGold}}>
+                  <Wand2 className="w-5 h-5" />
+                  SensAI's Recommendation
+                </h3>
+                <p className={`${colors.textMuted} italic mt-2`}>{lastRecommendation}</p>
+              </div>
+            )}
+            
+            <h3 className="text-lg font-semibold pt-2">Last Session</h3>
+            <StatItem label="Rating" value={`${lastSession.rating}/10`} icon={<Star className="w-5 h-5 text-yellow-500" />} />
+            <StatItem label="Temp" value={`${lastSession.temperature}°C`} icon={<Thermometer className="w-5 h-5" style={{color: colors.accentGold}} />} />
+            <StatItem label="Duration" value={`${lastSession.timer} min`} />
+            <StatItem label="Music" value={lastSession.music ? "Yes" : "No"} />
+            
+            {data.length > 0 && (
+              <div className={`pt-4 border-t ${colors.border}`}>
+                <h3 className="text-lg font-semibold mb-2" style={{color: colors.accentGold}}>Session Data Graph</h3>
+                <SensorGraph data={data} />
+              </div>
+            )}
+            
+            <h3 className={`text-lg font-semibold pt-4 border-t ${colors.border}`}>All-Time Stats</h3>
+            <StatItem label="Total Sessions" value={totalSessions} />
+            <StatItem label="Average Rating" value={avgRating} />
+            
+          </div>
+        )}
+        
+        <Button onClick={() => setView('goodbye')}>
+          Done <ChevronsRight className="w-5 h-5 ml-1" />
+        </Button>
+      </div>
     </div>
   );
 }
 
-export default App;
+function GoodbyeView({ setView, animationStep }: ViewProps) {
+  const phrase = "Thank you for using SensAI. Until next time.";
+  useSpeak(phrase, animationStep, 1);
+
+  const phraseClass = `text-center phrase-animated ${
+    animationStep === 1
+      ? 'text-4xl scale-110 flex-1 flex items-center justify-center'
+      : `text-2xl font-light ${colors.textMuted} mb-8`
+  }`;
+
+  return (
+    <div className="phrase-container justify-center">
+      <p className={phraseClass}>
+        {phrase}
+      </p>
+      <div className={`flex flex-col gap-4 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
+        <Button onClick={() => setView('welcome')}>
+          <ArrowLeft className="w-5 h-5 mr-2" />
+          Back to Start
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+
+// --- UI Components (Re-styled to match Original App.tsx) ---
+
+// Inlined SVG Icons from original App.tsx for the buttons
+const SunIcon = () => (
+  <svg xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-6.364-.386l1.591-1.591M3 12H.75m.386-6.364l1.591 1.591" />
+  </svg>
+);
+const MoonIcon = () => (
+  <svg xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-2">
+    <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21c1.93 0 3.73-.524 5.287-1.447z" />
+  </svg>
+);
+
+
+interface ButtonProps {
+  children: React.ReactNode;
+  onClick: () => void;
+  type?: 'button' | 'submit' | 'reset';
+  variant?: 'primary' | 'secondary';
+  icon?: React.ReactNode;
+}
+
+function Button({ children, onClick, type = 'button', variant = 'primary', icon }: ButtonProps) {
+  const primaryStyle = `text-black text-lg font-medium transition-all hover:shadow-[0_0_20px_rgba(235,15,53,0.8),0_0_40px_rgba(235,15,53,0.4)]`;
+  const secondaryStyle = `${colors.card} border ${colors.border} text-lg font-medium text-white transition-all hover:border-[#eb0f35] hover:shadow-[0_0_20px_rgba(235,15,53,0.4)]`;
+  
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      className={`w-full p-4 rounded-lg flex items-center justify-center ${variant === 'primary' ? primaryStyle : secondaryStyle}`}
+      style={{
+        backgroundColor: variant === 'primary' ? colors.accentGold : 'transparent',
+      }}
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+interface RadioPillProps {
+  name: string;
+  value: string;
+  checked: boolean;
+  onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  label: string;
+}
+
+function RadioPill({ name, value, checked, onChange, label }: RadioPillProps) {
+  return (
+    <label className={`flex-1 p-3 text-center rounded-lg cursor-pointer transition-all duration-200 ${
+      checked ? `text-black` : `${colors.border} border ${colors.text} hover:border-[#eb0f35]`
+    }`}
+    style={{
+      backgroundColor: checked ? colors.accentGold : 'transparent',
+    }}
+    >
+      <input
+        type="radio"
+        name={name}
+        value={value}
+        checked={checked}
+        onChange={onChange}
+        className="sr-only"
+      />
+      {label}
+    </label>
+  );
+}
+
+interface SwitchToggleProps {
+  enabled: boolean;
+  setEnabled: (enabled: boolean) => void;
+}
+
+function SwitchToggle({ enabled, setEnabled }: SwitchToggleProps) {
+  return (
+    <button
+      type="button"
+      onClick={() => setEnabled(!enabled)}
+      className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${
+        enabled ? colors.primaryBg : 'bg-zinc-700'
+      }`}
+    >
+      <span
+        className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${
+          enabled ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  );
+}
+
+interface SensorGraphProps {
+  data: SensorRecord[];
+}
+
+function SensorGraph({ data }: SensorGraphProps) {
+  const graphData = data.map((d, i) => ({
+    name: i * 3, // Simulate time in seconds
+    temp: d.temp,
+    humidity: d.humidity,
+  }));
+
+  return (
+    <div style={{ width: '100%', height: 200 }}>
+      <ResponsiveContainer>
+        <LineChart data={graphData} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke={colors.border} />
+          <XAxis dataKey="name" stroke="#9CA3AF" unit="s" fontSize={12} />
+          <YAxis yAxisId="left" stroke={colors.accentGold} unit="°C" fontSize={12} />
+          <YAxis yAxisId="right" orientation="right" stroke="#60A5FA" unit="%" fontSize={12} />
+          <Tooltip
+            contentStyle={{ backgroundColor: colors.card, border: `1px solid ${colors.border}`, borderRadius: '8px' }}
+            labelStyle={{ color: colors.text }}
+            itemStyle={{ color: colors.text }}
+          />
+          <Line yAxisId="left" type="monotone" dataKey="temp" stroke={colors.accentGold} strokeWidth={2} dot={false} name="Temp" />
+          <Line yAxisId="right" type="monotone" dataKey="humidity" stroke="#60A5FA" strokeWidth={2} dot={false} name="Humidity" />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+interface StatItemProps {
+  label: string;
+  value: string | number;
+  icon?: React.ReactNode;
+}
+
+function StatItem({ label, value, icon = null }: StatItemProps) {
+  if (value === null || value === undefined) return null;
+  return (
+    <div className="flex justify-between items-center">
+      <span className={`${colors.textMuted} flex items-center gap-2`}>
+        {icon}
+        {label}
+      </span>
+      <span className={`text-lg font-medium ${colors.text}`}>{value}</span>
+    </div>
+  );
+}

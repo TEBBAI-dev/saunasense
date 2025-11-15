@@ -1,0 +1,22 @@
+[build]
+  # This is correct: your code is in the 'frontend' folder
+  base = "frontend"
+  
+  # This is correct: 'npm run build' inside 'frontend'
+  command = "npm run build"
+
+  # This should be 'dist', not 'frontend/dist'.
+  # The publish path is *relative* to your 'base' directory.
+  # Netlify will look for 'frontend/dist'.
+  publish = "dist"
+
+[build.environment]
+  # --- ADD THIS ---
+  # This tells Netlify to use the stable Node 18
+  NODE_VERSION = "18"
+
+# This redirect rule is important for Vite apps
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

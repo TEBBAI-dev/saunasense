@@ -6,14 +6,17 @@
 
 body {
   font-family: 'Nunito', ui-sans-serif, system-ui, sans-serif;
+  /* This ensures the dark background from the original file is applied */
+  background-color: #09090b; /* This is bg-zinc-950 */
 }
 
-/* Custom slider styling */
+/* Custom slider styling from original App.tsx */
 input[type="range"] {
   -webkit-appearance: none;
   appearance: none;
   background: transparent;
   cursor: pointer;
+  width: 100%; /* Ensure sliders take full width */
 }
 
 input[type="range"]::-webkit-slider-track {
@@ -25,6 +28,7 @@ input[type="range"]::-webkit-slider-track {
 input[type="range"]::-webkit-slider-thumb {
   -webkit-appearance: none;
   appearance: none;
+  margin-top: -8px; /* Center thumb on track */
   background: #eb0f35;
   height: 24px;
   width: 24px;

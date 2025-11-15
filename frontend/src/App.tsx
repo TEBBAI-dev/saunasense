@@ -1,14 +1,14 @@
 import React, { useState, useEffect, useRef, useCallback, createContext, useContext } from 'react';
 import { initializeApp, getApps } from 'firebase/app';
 import type { FirebaseApp } from 'firebase/app';
-
-// FIX: Separated value and type imports for firebase/auth
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import type { User } from 'firebase/auth';
+import type { DocumentSnapshot } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import type { Auth } from 'firebase/auth';
 
-// FIX: Separated value and type imports for firebase/firestore
+
 import { 
-  getFirestore, doc, onSnapshot, setDoc, getDoc, updateDoc, 
+  getFirestore, doc, onSnapshot, setDoc, updateDoc, 
   arrayUnion, setLogLevel
 } from 'firebase/firestore';
 import type { Firestore, DocumentReference, DocumentData } from 'firebase/firestore';
@@ -19,7 +19,8 @@ import {
   Droplet, Wand2, Power, ChevronsRight, ArrowLeft 
 } from 'lucide-react';
 
-// --- Brand Colors (From Original App.tsx) ---
+
+
 const colors = {
   bg: 'bg-black',
   text: 'text-gray-100',
@@ -31,8 +32,7 @@ const colors = {
   accentGold: '#eb0f35', // The red color from your original file
 };
 
-// --- Firebase (Simulated Config) ---
-// In a real build, this would be populated.
+// --- Firebase Config ---
 const firebaseConfig = {
 
   apiKey: "AIzaSyB4XguaZxBNj3ilPbXl0-JHnN7RHORuKLE",
@@ -52,7 +52,7 @@ const firebaseConfig = {
 };
 
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-sens-ai-app';
+const appId = 'default-sens-ai-app';
 
 // Initialize Firebase
 const app: FirebaseApp = getApps().length > 0 ? getApps()[0] : initializeApp(firebaseConfig);
@@ -175,7 +175,6 @@ export default function App() {
   const [userId, setUserId] = useState<string | null>(null);
   
   const [saunaSettings, setSaunaSettings] = useState<SaunaSettings>({ timer: 15, temperature: 75, music: false });
-  const [sensorHistory, setSensorHistory] = useState<SensorRecord[]>([]);
   const [stats, setStats] = useState<Stats>({
     totalSessions: 0,
     avgRating: 0,
@@ -208,24 +207,21 @@ export default function App() {
   // --- Authentication ---
   useEffect(() => {
     const initAuth = async () => {
-      try {
-        const token = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        if (token) {
-          await signInWithCustomToken(auth, token);
-        } else {
-          await signInAnonymously(auth);
-        }
-      } catch (error) {
-        console.error("Auth Error: ", error);
-        if (auth.currentUser === null) {
-          await signInAnonymously(auth);
-        }
-      }
+     try {
+  // We only want to sign in anonymously
+  await signInAnonymously(auth);
+} catch (error) {
+  console.error("Auth Error: ", error);
+  if (auth.currentUser === null) {
+    // Try one more time if it failed
+    await signInAnonymously(auth);
+  }
+}
     };
     
     initAuth();
 
-    const unsub = onAuthStateChanged(auth, (user) => {
+    const unsub = onAuthStateChanged(auth, (user: User | null) => {
       if (user) {
         setUserId(user.uid);
         setIsAuthReady(true);
@@ -248,7 +244,7 @@ export default function App() {
     setIsLoading(true);
     const userDocRef: DocumentReference<DocumentData> = doc(db, 'artifacts', appId, 'users', userId);
     
-    const unsub = onSnapshot(userDocRef, (docSnap) => {
+    const unsub = onSnapshot(userDocRef, (docSnap: DocumentSnapshot) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         const sessions: SessionData[] = data.sessions || [];
@@ -348,8 +344,6 @@ export default function App() {
     const steps = durationMinutes * 60 / 3; // Update every 3 seconds
     const tempIncrease = (targetTemp - currentTemp) / (steps / 2); // Reach target temp halfway
     const humidityIncrease = 30 / (steps / 2); // Reach 45% humidity halfway
-
-    setSensorHistory([]); // Clear old history
 
     const simulationInterval = setInterval(() => {
       if (currentTemp < targetTemp) {
@@ -470,7 +464,6 @@ export default function App() {
     if (!isAuthReady || !userId || !db) {
       console.log("Resetting local state (demo).");
       setStats({ totalSessions: 0, avgRating: 0, lastSession: null, lastRecommendation: null });
-      setSensorHistory([]);
       changeView('welcome');
       return;
     }
@@ -480,7 +473,6 @@ export default function App() {
       const userDocRef = doc(db, 'artifacts', appId, 'users', userId);
       await setDoc(userDocRef, { sessions: [] }, { merge: true }); 
       console.log("Session data reset!");
-      setSensorHistory([]);
       setIsLoading(false);
       changeView('welcome');
     } catch (error) {
@@ -652,7 +644,7 @@ function WelcomeView({ setView, stats, animationStep }: WelcomeViewProps) {
       
       <div className={`flex flex-col gap-4 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
         <Button onClick={() => setView('newToSauna')} icon={<SunIcon />}>New to sauna</Button>
-        <Button onClick={() => setView('experiment')} icon={<MoonIcon />}>Experiment mode</Button>
+        <Button onClick={() => setView('experiment')} icon={<MoonIcon />}>Custom session</Button>
         {showRecommended && (
           <Button onClick={() => setView('recommended')} icon={<Star className="w-5 h-5 mr-2" />}>
             Recommended Settings
@@ -1254,20 +1246,49 @@ function GoodbyeView({ setView, animationStep }: ViewProps) {
 
 // Inlined SVG Icons from original App.tsx for the buttons
 const SunIcon = () => (
-  <svg xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M12 3v2.25m6.364.386l-1.591 1.591M21 12h-2.25m-.386 6.364l-1.591-1.591M12 18.75V21m-6.364-.386l1.591-1.591M3 12H.75m.386-6.364l1.591 1.591" />
+  <svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="1.5" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className="w-5 h-5 mr-2"
+  >
+    <path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path>
+    <path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path>
   </svg>
 );
+
+// Replaces "MoonIcon" - more fitting for "Experiment mode"
 const MoonIcon = () => (
-  <svg xmlns="http://www.w.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 mr-2">
-    <path strokeLinecap="round" strokeLinejoin="round" d="M21.752 15.002A9.718 9.718 0 0118 15.75c-5.385 0-9.75-4.365-9.75-9.75 0-1.33.266-2.597.748-3.752A9.753 9.753 0 003 11.25C3 16.635 7.365 21 12.75 21c1.93 0 3.73-.524 5.287-1.447z" />
+  <svg 
+    xmlns="http://www.w3.org/2000/svg" 
+    viewBox="0 0 24 24" 
+    fill="none" 
+    stroke="currentColor" 
+    strokeWidth="1.5" 
+    strokeLinecap="round" 
+    strokeLinejoin="round" 
+    className="w-5 h-5 mr-2"
+  >
+    <line x1="21" x2="14" y1="4" y2="4"></line>
+    <line x1="10" x2="3" y1="4" y2="4"></line>
+    <line x1="21" x2="12" y1="12" y2="12"></line>
+    <line x1="8" x2="3" y1="12" y2="12"></line>
+    <line x1="21" x2="16" y1="20" y2="20"></line>
+    <line x1="12" x2="3" y1="20" y2="20"></line>
+    <line x1="14" x2="14" y1="2" y2="6"></line>
+    <line x1="8" x2="8" y1="10" y2="14"></line>
+    <line x1="16" x2="16" y1="18" y2="22"></line>
   </svg>
 );
 
 
 interface ButtonProps {
   children: React.ReactNode;
-  onClick: () => void;
+  onClick?: () => void;
   type?: 'button' | 'submit' | 'reset';
   variant?: 'primary' | 'secondary';
   icon?: React.ReactNode;

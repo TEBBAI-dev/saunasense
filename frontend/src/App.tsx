@@ -286,49 +286,30 @@ export default function App() {
   }, [isLoading, view.name, animationStep]);
 
   // --- Narration ---
-  const speak = useCallback(async (text: string) => {
+const speak = useCallback(async (text: string) => {
     if (!isNarrationEnabled || !hasInteracted || isSpeaking) return;
     
     setIsSpeaking(true);
     try {
-      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=${apiKey}`;
-      
-      const payload = {
-        contents: [{
-          parts: [{ text: `Say in a relaxed, easy-going, medium-pitched voice: ${text}` }]
-        }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: {
-            voiceConfig: {
-              prebuiltVoiceConfig: { voiceName: "Callirrhoe" }
-            }
-          }
-        },
-        model: "gemini-2.5-flash-preview-tts"
-      };
-
-      const response = await fetch(apiUrl, {
+      const functionUrl = '/.netlify/functions/getTtsAudio';
+      const response = await fetch(functionUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify({ text: text }) // Send the text
       });
 
       if (!response.ok) {
-        throw new Error(`TTS API request failed with status ${response.status}`);
+        throw new Error(`Netlify function failed with status ${response.status}`);
       }
       
       const result = await response.json();
-      const part = result?.candidates?.[0]?.content?.parts?.[0];
-      const audioData = part?.inlineData?.data;
-      const mimeType = part?.inlineData?.mimeType;
+      const audioData = result?.audioData;
 
-      if (audioData && mimeType && mimeType.startsWith("audio/")) {
+      if (audioData) {
         const pcmData = base64ToArrayBuffer(audioData);
         await playPcmData(pcmData);
       } else {
-        throw new Error("Invalid TTS response format");
+        throw new Error(result.error || "Invalid TTS response from backend");
       }
     } catch (error) {
       console.error("TTS Error:", error);

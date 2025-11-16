@@ -11,9 +11,11 @@
   publish = "dist"
 
 [build.environment]
-  # --- ADD THIS ---
   # This tells Netlify to use the stable Node 18
   NODE_VERSION = "18"
+
+[functions]
+directory = "netlify/functions"
 
 # This redirect rule is important for Vite apps
 [[redirects]]

@@ -525,12 +525,10 @@ export default function App() {
 
   return (
     <AppContext.Provider value={appContextValue}>
-      <div 
-        className="h-screen w-screen flex justify-center items-center bg-zinc-950 p-4"
+      <div className="h-screen w-screen bg-zinc-950 md:flex md:justify-center md:items-center md:p-4"
         onClick={() => !hasInteracted && setHasInteracted(true)}
       >
-        <main className={`relative w-full max-w-sm h-[800px] max-h-[90vh] ${colors.bg} ${colors.text} rounded-3xl shadow-2xl overflow-hidden border-4 ${colors.border}`}>
-          
+        <main className={`relative w-full h-full ${colors.bg} ${colors.text} overflow-y-auto md:max-w-sm md:h-[800px] md:max-h-[90vh] md:rounded-3xl md:shadow-2xl md:overflow-hidden md:border-4 ${colors.border}`}>
           <header className="flex items-center justify-between p-6 pb-0">
             <h1 className="text-3xl font-light text-white">
               Sens<span style={{color: colors.accentGold}}>AI</span>
@@ -643,8 +641,8 @@ function WelcomeView({ setView, stats, animationStep }: WelcomeViewProps) {
       </p>
       
       <div className={`flex flex-col gap-4 w-full ${animationStep === 2 ? 'options-visible' : 'options-hidden'}`}>
-        <Button onClick={() => setView('newToSauna')} icon={<SunIcon />}>New to sauna</Button>
-        <Button onClick={() => setView('experiment')} icon={<MoonIcon />}>Custom session</Button>
+        <Button onClick={() => setView('newToSauna')} icon={<BookIcon />}>New to sauna</Button>
+        <Button onClick={() => setView('experiment')} icon={<SliderIcon />}>Custom session</Button>
         {showRecommended && (
           <Button onClick={() => setView('recommended')} icon={<Star className="w-5 h-5 mr-2" />}>
             Recommended Settings
@@ -1245,7 +1243,7 @@ function GoodbyeView({ setView, animationStep }: ViewProps) {
 // --- UI Components (Re-styled to match Original App.tsx) ---
 
 // Inlined SVG Icons from original App.tsx for the buttons
-const SunIcon = () => (
+const BookIcon = () => (
   <svg 
     xmlns="http://www.w3.org/2000/svg" 
     viewBox="0 0 24 24" 
@@ -1262,7 +1260,7 @@ const SunIcon = () => (
 );
 
 // Replaces "MoonIcon" - more fitting for "Experiment mode"
-const MoonIcon = () => (
+const SliderIcon = () => (
   <svg 
     xmlns="http://www.w3.org/2000/svg" 
     viewBox="0 0 24 24" 

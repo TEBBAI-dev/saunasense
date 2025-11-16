@@ -35,7 +35,7 @@ const colors = {
 // --- Firebase Config ---
 const firebaseConfig = {
 
-  apiKey: "AIzaSyB4XguaZxBNj3ilPbXl0-JHnN7RHORuKLE",
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
 
   authDomain: "sauna-senseai.firebaseapp.com",
 

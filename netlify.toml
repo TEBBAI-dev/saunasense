@@ -15,7 +15,9 @@
   NODE_VERSION = "18"
 
 [functions]
-directory = "netlify/functions"
+  # This path is crucial. It tells Netlify to go
+  # UP from 'frontend' to the root, then into 'netlify/functions'
+  directory = "../netlify/functions"
 
 # This redirect rule is important for Vite apps
 [[redirects]]

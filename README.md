@@ -1,4 +1,4 @@
-# SaunaSensAI
+# ***SaunaSensAI***
 #### Developed by Smoothies of Glory
 
 A calm, personalized, AI-powered sauna guide built for premium wellness experiences, from Finnish tradition to luxury LA spas.
@@ -30,42 +30,6 @@ Live Demo:  https://saunasense.netlify.app/
 - Recommendations based on current health and physical/mental state
 - Wearables integration for conversational control over the sauna settings during session
 - Creates a song based on user movement, speaking, settings, data, heartbeat, breath and it creates a QR-code to download and share on all platforms the song.
-
-## Usage 
-![[Mermaid Chart - Create complex, visual diagrams with text.-2025-11-15-155445.png]]
-
-### 📁 Project Structure
-saunasense/
-└── frontend/
-    ├── public/
-    │   └── vite.svg
-    │
-    ├── src/
-    │   ├── assets/
-    │   │   └── react.svg
-    │   │
-    │   ├── App.css
-    │   ├── App.tsx
-    │   ├── config.ts
-    │   ├── index.css
-    │   └── main.tsx
-    │
-    ├── .gitignore
-    ├── eslint.config.js
-    ├── index.html
-    ├── package.json
-    ├── package-lock.json
-    ├── postcss.config.js
-    ├── tailwind.config.js
-    ├── tsconfig.app.json
-    ├── tsconfig.node.json
-    ├── tsconfig.json
-    ├── vite.config.ts
-    │
-    ├── .firebaserc
-    ├── firebase.json
-    ├── netlify.toml
-    └── README.md
 
 ### 📦 Key Directories & Files
 **public**/
